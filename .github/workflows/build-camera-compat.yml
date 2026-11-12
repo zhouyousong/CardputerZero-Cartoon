@@ -24,15 +24,18 @@ jobs:
           set -eu
           apt-get update
           apt-get install -y --no-install-recommends \
-            ca-certificates curl gnupg git build-essential cmake ninja-build \
+            ca-certificates curl git build-essential cmake ninja-build \
             pkg-config dpkg-dev libfmt-dev libpng-dev libjpeg-dev \
             libfreetype-dev zlib1g-dev libcjson-dev libv4l-dev libpulse-dev
           curl --fail --location --retry 3 \
-            https://archive.raspberrypi.com/debian/raspberrypi.gpg.key \
-            -o /tmp/raspberrypi.asc
-          gpg --batch --dearmor -o /usr/share/keyrings/raspberrypi.gpg /tmp/raspberrypi.asc
+            https://archive.raspberrypi.com/debian/pool/main/r/raspberrypi-archive-keyring/raspberrypi-archive-keyring_2025.1+rpt1_all.deb \
+            -o /tmp/raspberrypi-keyring.deb
           printf '%s\n' \
-            'deb [signed-by=/usr/share/keyrings/raspberrypi.gpg] https://archive.raspberrypi.com/debian trixie main' \
+            '2e727149d7acb8cc7f604e66d0049161039c8aa1eaf1175e54f9e69d963d60e4  /tmp/raspberrypi-keyring.deb' \
+            | sha256sum -c -
+          dpkg -i /tmp/raspberrypi-keyring.deb
+          printf '%s\n' \
+            'deb [signed-by=/usr/share/keyrings/raspberrypi-archive-keyring.gpg] https://archive.raspberrypi.com/debian trixie main' \
             > /etc/apt/sources.list.d/raspberrypi.list
           apt-get update
           apt-get install -y --no-install-recommends \
