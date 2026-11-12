@@ -89,6 +89,20 @@ Hardware camera/display tests remain separate from cloud tests.
   distance. The IMX219 may require manual focus adjustment for close objects.
 - The guide box is a positioning aid, not a crop or an autofocus indicator.
 
+## Original Camera compatibility repair
+
+The separate `repair/camera-libcamera08` branch builds the original
+[CardputerZero Camera v1.0.3](https://github.com/CardputerZero/Camera/tree/v1.0.3)
+against Raspberry Pi libcamera `0.8.0+rpt20261104-1`. The source commit is pinned
+in `.github/workflows/build-camera-compat.yml`; only the runtime package
+dependency is patched from libcamera 0.7 to 0.8. The result is a custom
+`camera` package version `1.0.3-m5stack1+libcamera08.1`, not an official release.
+
+Use this package only on a matching ARM64 system. Simulate installation with
+`apt-get -s --no-remove --no-install-recommends install /absolute/package.deb`
+before installing. It should update only `camera`, without downgrading the
+camera stack or changing Cartoon. Photos are not part of this package.
+
 ## License
 
 MIT; see [LICENSE](LICENSE). Template notices and third-party asset licenses are

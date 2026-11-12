@@ -1,0 +1,103 @@
+name: Build original Camera for libcamera 0.8
+
+on:
+  push:
+    branches: [repair/camera-libcamera08]
+    paths:
+      - .github/workflows/build-camera-compat.yml
+      - .github/patches/camera-libcamera08.patch
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    container: debian:13
+    timeout-minutes: 30
+    env:
+      LIBCAMERA_VERSION: 0.8.0+rpt20261104-1
+    steps:
+      - name: Install native build dependencies
+        run: |
+          set -eu
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl gnupg git build-essential cmake ninja-build \
+            pkg-config dpkg-dev libfmt-dev libpng-dev libjpeg-dev \
+            libfreetype-dev zlib1g-dev libcjson-dev libv4l-dev libpulse-dev
+          curl --fail --location --retry 3 \
+            https://archive.raspberrypi.com/debian/raspberrypi.gpg.key \
+            -o /tmp/raspberrypi.asc
+          gpg --batch --dearmor -o /usr/share/keyrings/raspberrypi.gpg /tmp/raspberrypi.asc
+          printf '%s\n' \
+            'deb [signed-by=/usr/share/keyrings/raspberrypi.gpg] https://archive.raspberrypi.com/debian trixie main' \
+            > /etc/apt/sources.list.d/raspberrypi.list
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            "libcamera-dev=${LIBCAMERA_VERSION}" \
+            "libcamera0.8=${LIBCAMERA_VERSION}" \
+            "libcamera-ipa=${LIBCAMERA_VERSION}"
+          mkdir -p "${RUNNER_TEMP}/miniaudio"
+          curl --fail --location --retry 3 \
+            https://raw.githubusercontent.com/mackron/miniaudio/0.11.23/miniaudio.h \
+            -o "${RUNNER_TEMP}/miniaudio/miniaudio.h"
+      - uses: actions/checkout@v4
+        with:
+          path: repair
+          persist-credentials: false
+      - name: Check out official Camera v1.0.3
+        uses: actions/checkout@v4
+        with:
+          repository: CardputerZero/Camera
+          ref: 9e6b5c0be0ee0e1be54d21f1cb964df30ae0b931
+          path: camera
+          persist-credentials: false
+      - name: Apply runtime package dependency correction
+        working-directory: camera
+        run: git apply --check ../repair/.github/patches/camera-libcamera08.patch && git apply ../repair/.github/patches/camera-libcamera08.patch
+      - name: Configure against the device libcamera ABI
+        working-directory: camera
+        run: |
+          cmake --preset cp0-native \
+            -DCM0_SDK_ROOT=/ \
+            -DCM0_ALLOW_FETCH_DEPS=OFF \
+            -DLIBCAMERA_INCLUDE_DIR=/usr/include/libcamera \
+            -DMINIAUDIO_INCLUDE_DIR="${RUNNER_TEMP}/miniaudio" \
+            -DCAMERA_APP_BUILD_TESTS=ON \
+            -DAPP_DEBIAN_REVISION=m5stack1+libcamera08.1 \
+            '-DAPP_MAINTAINER=zhouyousong <88005595+zhouyousong@users.noreply.github.com>'
+      - name: Build original Camera
+        working-directory: camera
+        run: cmake --build --preset cp0-native-rel --parallel 2
+      - name: Run original Camera tests
+        working-directory: camera
+        run: ctest --test-dir build/cp0-native -C Release --output-on-failure --no-tests=error
+      - name: Verify executable ABI and package
+        working-directory: camera
+        run: |
+          set -eu
+          executable=build/cp0-native/Release/camera_app
+          readelf -d "${executable}" | grep 'Shared library: \[libcamera.so.0.8\]'
+          if readelf -d "${executable}" | grep -q 'libcamera.*\.so\.0\.7'; then
+            echo 'Unexpected old libcamera dependency' >&2
+            exit 1
+          fi
+          ldd -r "${executable}" > build/runtime-link-check.txt 2>&1
+          cat build/runtime-link-check.txt
+          if grep -E 'not found|undefined symbol' build/runtime-link-check.txt; then
+            exit 1
+          fi
+          cpack --config build/cp0-native/CPackConfig.cmake -C Release -G DEB
+          package=dist/Camera_1.0.3_m5stack1+libcamera08.1_arm64.deb
+          test "$(dpkg-deb -f "${package}" Package)" = camera
+          test "$(dpkg-deb -f "${package}" Architecture)" = arm64
+          test "$(dpkg-deb -f "${package}" Version)" = 1.0.3-m5stack1+libcamera08.1
+          dpkg-deb -f "${package}" Depends | grep 'libcamera0.8'
+          sha256sum "${package}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: original-camera-libcamera08-arm64
+          path: camera/dist/*.deb
+          if-no-files-found: error
