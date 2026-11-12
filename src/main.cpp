@@ -4,9 +4,8 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "app.h"
+#include "cartoon_screen.h"
 
 int main() {
-    app::Application application;
-    return application.run();
+    return cartoon::run();
 }

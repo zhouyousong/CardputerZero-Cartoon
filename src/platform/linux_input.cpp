@@ -187,6 +187,14 @@ uint32_t map_evdev_key(uint16_t code) {
     switch (code) {
         case KEY_ESC:
             return LV_KEY_ESC;
+        case KEY_ENTER:
+        case KEY_KPENTER:
+        case KEY_OK:
+            return LV_KEY_ENTER;
+        case KEY_UP:
+            return LV_KEY_UP;
+        case KEY_DOWN:
+            return LV_KEY_DOWN;
         case KEY_LEFT:
             return LV_KEY_LEFT;
         case KEY_RIGHT:
@@ -413,6 +421,12 @@ void clear_global_key_listener(GlobalKeyListener listener, void* user_data) {
 
 const char* describe_key(uint32_t key) {
     switch (key) {
+        case LV_KEY_ENTER:
+            return "OK";
+        case LV_KEY_UP:
+            return "Up";
+        case LV_KEY_DOWN:
+            return "Down";
         case LV_KEY_ESC:
             return "Esc";
         case LV_KEY_LEFT:

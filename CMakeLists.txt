@@ -6,7 +6,7 @@
 
 cmake_minimum_required(VERSION 3.31)
 
-project(template_app VERSION 0.2.1 LANGUAGES C CXX)
+project(cardputerzero_cartoon VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -27,6 +27,9 @@ set(APP_DRM_DEVICE "/dev/dri/card0" CACHE STRING "Linux DRM device path used whe
 set(APP_DRM_CONNECTOR_ID "-1" CACHE STRING "DRM connector id used when APP_USE_DRM=ON; -1 auto-selects")
 set(APP_USE_DRM OFF CACHE BOOL "Enable LVGL Linux DRM/KMS backend for embedded Linux builds")
 set(CM0_ALLOW_FETCH_DEPS ON CACHE BOOL "Allow downloading missing CM0 BSP/dependencies during cross builds")
+if(USE_DESKTOP OR NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "Cartoon currently supports the Linux device build. Use --preset cp0-native -DCM0_SDK_ROOT=/")
+endif()
 # Export compile commands
 # Used for IDE IntelliSense
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile_commands.json" FORCE)
@@ -616,6 +619,26 @@ endif()
 # ====================================================
 # main
 # ====================================================
+find_package(PkgConfig REQUIRED)
+find_package(Threads REQUIRED)
+pkg_check_modules(ZBAR REQUIRED IMPORTED_TARGET zbar)
+add_library(cartoon_scanner STATIC
+    src/scanner/qr_decoder.cpp
+    src/scanner/scan_session.cpp
+    src/scanner/camera_capture.cpp
+)
+target_include_directories(cartoon_scanner PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src/scanner")
+target_link_libraries(cartoon_scanner PUBLIC PkgConfig::ZBAR Threads::Threads)
+target_link_libraries(${PROJECT_NAME}_core PUBLIC cartoon_scanner)
+
+include(CTest)
+if(BUILD_TESTING)
+    pkg_check_modules(QRENCODE REQUIRED IMPORTED_TARGET libqrencode)
+    add_executable(scanner_tests tests/scanner_tests.cpp)
+    target_link_libraries(scanner_tests PRIVATE cartoon_scanner PkgConfig::QRENCODE)
+    add_test(NAME scanner_contract COMMAND scanner_tests)
+endif()
+
 add_executable(${PROJECT_NAME}
     src/main.cpp
 )

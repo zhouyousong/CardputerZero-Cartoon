@@ -1,0 +1,44 @@
+name: Build CardputerZero Cartoon
+run-name: Cartoon build ${{ github.run_number }} on ${{ github.ref_name }}
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    container: debian:13
+    timeout-minutes: 30
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates git build-essential cmake ninja-build pkg-config dpkg-dev \
+            libfmt-dev libpng-dev libjpeg-dev libfreetype-dev zlib1g-dev \
+            libzbar-dev libqrencode-dev
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Configure
+        run: |
+          cmake --preset cp0-native \
+            -DCM0_SDK_ROOT=/ \
+            -DCM0_ALLOW_FETCH_DEPS=OFF \
+            -DBUILD_TESTING=ON
+      - name: Build
+        run: cmake --build --preset cp0-native-rel --parallel 2
+      - name: Test scanner and controls
+        run: ctest --test-dir build/cp0-native -C Release --output-on-failure
+      - name: Package
+        run: cpack --config build/cp0-native/CPackConfig.cmake -C Release -G DEB
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cardputerzero-cartoon-arm64
+          path: dist/*.deb
+          if-no-files-found: error
