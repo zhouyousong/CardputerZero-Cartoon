@@ -94,8 +94,9 @@ Hardware camera/display tests remain separate from cloud tests.
 The separate `repair/camera-libcamera08` branch builds the original
 [CardputerZero Camera v1.0.3](https://github.com/CardputerZero/Camera/tree/v1.0.3)
 against Raspberry Pi libcamera `0.8.0+rpt20261104-1`. The source commit is pinned
-in `.github/workflows/build-camera-compat.yml`; only the runtime package
-dependency is patched from libcamera 0.7 to 0.8. The result is a custom
+in `.github/workflows/build-camera-compat.yml`; the patch updates the runtime
+dependency and renamed libcamera 0.8 metering/white-balance enums without
+changing their meaning. The result is a custom
 `camera` package version `1.0.3-m5stack1+libcamera08.1`, not an official release.
 
 Use this package only on a matching ARM64 system. Simulate installation with

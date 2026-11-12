@@ -1,7 +1,8 @@
 diff --git a/cmake/cm0-package.cmake b/cmake/cm0-package.cmake
+index d88a99b..16d22b3 100644
 --- a/cmake/cm0-package.cmake
 +++ b/cmake/cm0-package.cmake
-@@ -115,9 +115,7 @@ set(APP_DEBIAN_PACKAGE_DEPENDS
+@@ -110,9 +110,7 @@ set(APP_DEBIAN_PACKAGE_DEPENDS
      libjpeg62-turbo
      zlib1g
      libfmt10
@@ -12,3 +13,67 @@ diff --git a/cmake/cm0-package.cmake b/cmake/cm0-package.cmake
      libcamera-ipa
      libpulse0
      libcjson1
+diff --git a/src/services/libcamera_backend.cpp b/src/services/libcamera_backend.cpp
+index 07d8530..09297ff 100644
+--- a/src/services/libcamera_backend.cpp
++++ b/src/services/libcamera_backend.cpp
+@@ -303,11 +303,11 @@ void append_json_rectangles(std::ostringstream& json, const char* key, const Spa
+ 
+ uint16_t exif_metering_mode(int32_t mode) {
+   switch (mode) {
+-    case libcamera::controls::MeteringCentreWeighted:
++    case libcamera::controls::AeMeteringModeCentreWeighted:
+       return 2;
+-    case libcamera::controls::MeteringSpot:
++    case libcamera::controls::AeMeteringModeSpot:
+       return 3;
+-    case libcamera::controls::MeteringMatrix:
++    case libcamera::controls::AeMeteringModeMatrix:
+       return 5;
+     default:
+       return 255;
+@@ -316,16 +316,16 @@ uint16_t exif_metering_mode(int32_t mode) {
+ 
+ uint16_t exif_light_source(int32_t awb_mode) {
+   switch (awb_mode) {
+-    case libcamera::controls::AwbDaylight:
++    case libcamera::controls::AwbModeDaylight:
+       return 1;
+-    case libcamera::controls::AwbFluorescent:
++    case libcamera::controls::AwbModeFluorescent:
+       return 2;
+-    case libcamera::controls::AwbIncandescent:
+-    case libcamera::controls::AwbTungsten:
++    case libcamera::controls::AwbModeIncandescent:
++    case libcamera::controls::AwbModeTungsten:
+       return 3;
+-    case libcamera::controls::AwbCloudy:
++    case libcamera::controls::AwbModeCloudy:
+       return 10;
+-    case libcamera::controls::AwbAuto:
++    case libcamera::controls::AwbModeAuto:
+       return 0;
+     default:
+       return 255;
+@@ -1326,8 +1326,8 @@ struct LibcameraBackend::Impl {
+     controls.set(libcamera::controls::ScalerCrop, full_scaler_crop());
+     controls.set(libcamera::controls::FrameDurationLimits,
+                  {kStillMinFrameDurationUs, kStillMaxFrameDurationUs});
+-    controls.set(libcamera::controls::AeMeteringMode, libcamera::controls::MeteringCentreWeighted);
+-    controls.set(libcamera::controls::AwbMode, libcamera::controls::AwbAuto);
++    controls.set(libcamera::controls::AeMeteringMode, libcamera::controls::AeMeteringModeCentreWeighted);
++    controls.set(libcamera::controls::AwbMode, libcamera::controls::AwbModeAuto);
+     controls.set(libcamera::controls::Brightness, 0.0f);
+     controls.set(libcamera::controls::Contrast, 1.0f);
+     controls.set(libcamera::controls::Saturation, 1.0f);
+@@ -1652,8 +1652,8 @@ struct LibcameraBackend::Impl {
+     sample.ae_state_available  = ae_state.has_value();
+     sample.ae_converged        = decision.ae_state == libcamera::controls::AeStateConverged;
+     sample.awb_state_available = awb_state.has_value();
+-    sample.awb_converged       = decision.awb_state == libcamera::controls::draft::AwbConverged ||
+-                                 decision.awb_state == libcamera::controls::draft::AwbLocked;
++    sample.awb_converged       = decision.awb_state == libcamera::controls::draft::AwbStateConverged ||
++                                 decision.awb_state == libcamera::controls::draft::AwbStateLocked;
+     if (colour_gains) {
+       decision.red_gain             = (*colour_gains)[0];
+       decision.blue_gain            = (*colour_gains)[1];
