@@ -1,3 +1,24 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 876e66f..c4a81b1 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -502,6 +502,8 @@ target_link_libraries(${PROJECT_NAME}_services PUBLIC ${PROJECT_NAME}_utils ${AP
+ if(CAMERA_APP_BUILD_TESTS)
+     enable_testing()
+     add_executable(camera_preview_test tests/camera_preview_test.cpp)
++    # These tests use assert for setup and checks, including in Release builds.
++    target_compile_options(camera_preview_test PRIVATE -UNDEBUG)
+     target_include_directories(camera_preview_test PRIVATE ${APP_SOURCE_DIR})
+     target_link_libraries(camera_preview_test PRIVATE
+         ${PROJECT_NAME}_services
+@@ -511,6 +513,7 @@ if(CAMERA_APP_BUILD_TESTS)
+     add_test(NAME camera_preview_test COMMAND camera_preview_test)
+ 
+     add_executable(device_config_test tests/device_config_test.cpp)
++    target_compile_options(device_config_test PRIVATE -UNDEBUG)
+     target_include_directories(device_config_test PRIVATE ${APP_SOURCE_DIR})
+     target_link_libraries(device_config_test PRIVATE ${PROJECT_NAME}_utils)
+     add_test(NAME device_config_test COMMAND device_config_test)
 diff --git a/cmake/cm0-package.cmake b/cmake/cm0-package.cmake
 index d88a99b..16d22b3 100644
 --- a/cmake/cm0-package.cmake

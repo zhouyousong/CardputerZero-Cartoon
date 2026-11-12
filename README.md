@@ -96,7 +96,8 @@ The separate `repair/camera-libcamera08` branch builds the original
 against Raspberry Pi libcamera `0.8.0+rpt20261104-1`. The source commit is pinned
 in `.github/workflows/build-camera-compat.yml`; the patch updates the runtime
 dependency and renamed libcamera 0.8 metering/white-balance enums without
-changing their meaning. The result is a custom
+changing their meaning. Assert-based upstream tests remain enabled in Release.
+The result is a custom
 `camera` package version `1.0.3-m5stack1+libcamera08.1`, not an official release.
 
 Use this package only on a matching ARM64 system. Simulate installation with

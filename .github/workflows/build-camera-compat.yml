@@ -57,7 +57,7 @@ jobs:
           ref: 9e6b5c0be0ee0e1be54d21f1cb964df30ae0b931
           path: camera
           persist-credentials: false
-      - name: Apply runtime package dependency correction
+      - name: Apply libcamera 0.8 compatibility patch
         working-directory: camera
         run: git apply --check ../repair/.github/patches/camera-libcamera08.patch && git apply ../repair/.github/patches/camera-libcamera08.patch
       - name: Configure against the device libcamera ABI
