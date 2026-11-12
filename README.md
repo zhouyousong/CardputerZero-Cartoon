@@ -37,7 +37,7 @@ Run as the normal device user with `video` and `input` group membership,
 preferably through APPLaunch, not as root.
 
 The UI uses the system Noto CJK font for multilingual results. The launcher
-icon is copied from the MIT-licensed template with a distinct filename.
+uses an original camera-and-QR icon; its editable source is `assets/images/cartoon.svg`.
 This initial release targets the Linux device, not the desktop simulator.
 
 ## Cloud build
