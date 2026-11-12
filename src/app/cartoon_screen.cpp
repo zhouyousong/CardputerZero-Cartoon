@@ -6,6 +6,7 @@
 #include "logger.h"
 #include "scan_session.h"
 #include "src/drivers/display/fb/lv_linux_fbdev.h"
+#include "src/misc/cache/instance/lv_image_cache.h"
 
 #include <csignal>
 #include <cstdio>
