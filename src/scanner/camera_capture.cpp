@@ -82,6 +82,24 @@ public:
 
 } // namespace
 
+std::vector<uint16_t> make_preview(const std::vector<uint8_t>& frame) {
+    if (frame.size() < kCaptureWidth * kCaptureHeight) {
+        throw std::invalid_argument("Preview requires a complete camera luminance frame");
+    }
+    std::vector<uint16_t> preview(kPreviewWidth * kPreviewHeight);
+    for (unsigned y = 0; y < kPreviewHeight; ++y) {
+        for (unsigned x = 0; x < kPreviewWidth; ++x) {
+            const auto source_y = (kPreviewHeight - 1 - y) * 2;
+            const auto source_x = (kPreviewWidth - 1 - x) * 2;
+            const uint8_t value = frame[source_y * kCaptureWidth + source_x];
+            preview[y * kPreviewWidth + x] =
+                static_cast<uint16_t>(((value >> 3) << 11) |
+                                      ((value >> 2) << 5) | (value >> 3));
+        }
+    }
+    return preview;
+}
+
 CameraCapture::~CameraCapture() {
     stop();
 }
@@ -182,15 +200,7 @@ void CameraCapture::capture() {
             }
             const auto generation = generation_.load();
             CameraUpdate next;
-            next.preview.resize(kPreviewWidth * kPreviewHeight);
-            for (unsigned y = 0; y < kPreviewHeight; ++y) {
-                for (unsigned x = 0; x < kPreviewWidth; ++x) {
-                    const uint8_t value = frame[(y * 2) * kCaptureWidth + x * 2];
-                    next.preview[y * kPreviewWidth + x] =
-                        static_cast<uint16_t>(((value >> 3) << 11) |
-                                              ((value >> 2) << 5) | (value >> 3));
-                }
-            }
+            next.preview = make_preview(frame);
             if (++frame_number % 2 == 0) {
                 next.result = decoder.decode(frame.data(), kCaptureWidth, kCaptureHeight);
             }

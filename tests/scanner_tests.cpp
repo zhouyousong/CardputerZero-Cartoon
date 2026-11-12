@@ -1,3 +1,4 @@
+#include "camera_capture.h"
 #include "qr_decoder.h"
 #include "scan_session.h"
 
@@ -100,6 +101,21 @@ void interaction_contract() {
     require(session.press(ScanKey::Escape) == ScanAction::Quit, "ESC must exit");
 }
 
+void preview_orientation_contract() {
+    using namespace cartoon;
+    std::vector<uint8_t> frame(kCaptureWidth * kCaptureHeight, 0);
+    frame[0] = 0xff;
+    frame[kCaptureWidth - 2] = 0x80;
+    frame[(kCaptureHeight - 2) * kCaptureWidth] = 0x40;
+    frame[(kCaptureHeight - 2) * kCaptureWidth + kCaptureWidth - 2] = 0x20;
+    const auto preview = make_preview(frame);
+    require(preview[0] == 0x2104, "Bottom-right must become preview top-left");
+    require(preview[kPreviewWidth - 1] == 0x4208, "Bottom-left must become preview top-right");
+    require(preview[(kPreviewHeight - 1) * kPreviewWidth] == 0x8410,
+            "Top-right must become preview bottom-left");
+    require(preview.back() == 0xffff, "Top-left must become preview bottom-right");
+}
+
 } // namespace
 
 int main() {
@@ -107,7 +123,8 @@ int main() {
         decode_contract();
         nearest_code_contract();
         interaction_contract();
-        std::puts("PASS: QR decoding, exact Unicode/long text, center selection, OK rescan, and recovery.");
+        preview_orientation_contract();
+        std::puts("PASS: QR decoding, exact Unicode/long text, center selection, OK rescan, recovery, and 180-degree preview.");
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());

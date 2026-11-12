@@ -16,6 +16,8 @@ constexpr unsigned kCaptureHeight = 240;
 constexpr unsigned kPreviewWidth = 160;
 constexpr unsigned kPreviewHeight = 120;
 
+std::vector<uint16_t> make_preview(const std::vector<uint8_t>& frame);
+
 struct CameraUpdate {
     std::vector<uint16_t> preview;
     DecodeResult result;

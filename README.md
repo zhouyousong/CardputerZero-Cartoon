@@ -8,6 +8,8 @@ An offline camera QR scanner for the 320x170 CardputerZero, based on the
 - Launch **CardputerZero-Cartoon** from APPLaunch to start the camera.
 - A grayscale preview runs at up to 10 fps; QR decoding runs at up to 5 fps.
   The full 320x240 grayscale camera frame is decoded, not just the guide box.
+- The preview is rotated 180 degrees to correct the mounted camera orientation.
+  QR decoding still receives the unmodified camera frame.
 - On recognition, scanning stops, the camera is released, and the complete text
   is displayed. The closest QR code to the image center wins if multiple codes
   are visible.
@@ -76,7 +78,8 @@ Removing it uses `sudo apt remove cardputerzero-cartoon`.
 Generated QR fixtures cover exact URL, Unicode and long-text decoding, blank
 frames, unsupported UTF-8/control data, and center selection. Interaction tests
 cover pause, queued-result suppression, OK-only rescan, scrolling, error recovery,
-and exit. Hardware camera/display tests remain separate from cloud tests.
+and exit. An asymmetric four-corner frame checks the 180-degree preview rotation.
+Hardware camera/display tests remain separate from cloud tests.
 
 ## Troubleshooting
 

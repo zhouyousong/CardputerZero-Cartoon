@@ -2,6 +2,6 @@
   "app_name": "CardputerZero-Cartoon",
   "package_name": "cardputerzero-cartoon",
   "bin_name": "cardputerzero_cartoon",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Offline camera QR scanner for CardputerZero"
 }
