@@ -1,5 +1,7 @@
 #include "qr_decoder.h"
 
+#include <ZXing/ReadBarcode.h>
+
 #include <limits>
 #include <stdexcept>
 
@@ -49,9 +51,44 @@ QrDecoder::QrDecoder() {
     scanner_.set_config(zbar::ZBAR_QRCODE, zbar::ZBAR_CFG_ENABLE, 1);
 }
 
-DecodeResult QrDecoder::decode(const uint8_t* pixels, unsigned width, unsigned height) {
-    if (!pixels || !width || !height) {
+DecodeResult QrDecoder::decode(const uint8_t* pixels, unsigned width, unsigned height,
+                              QrAlgorithm algorithm) {
+    if (!pixels || !width || !height ||
+        width > static_cast<unsigned>(std::numeric_limits<int>::max()) ||
+        height > static_cast<unsigned>(std::numeric_limits<int>::max())) {
         throw std::invalid_argument("QR image must contain grayscale pixels");
+    }
+    DecodeResult result;
+    double best_distance = std::numeric_limits<double>::max();
+    const auto select = [&](const std::string& text, double x, double y) {
+        x -= width / 2.0;
+        y -= height / 2.0;
+        const double distance = x * x + y * y;
+        if (distance < best_distance) {
+            best_distance = distance;
+            result = {true, is_displayable_utf8(text), text};
+        }
+    };
+    if (algorithm == QrAlgorithm::ZXing) {
+        ZXing::ReaderOptions options;
+        options.setFormats(ZXing::BarcodeFormat::QRCode).setTextMode(ZXing::TextMode::Plain);
+        const auto codes = ZXing::ReadBarcodes(
+            ZXing::ImageView(pixels, static_cast<int>(width), static_cast<int>(height),
+                             ZXing::ImageFormat::Lum), options);
+        for (const auto& code : codes) {
+            if (!code.isValid()) continue;
+            double x = 0;
+            double y = 0;
+            for (const auto& point : code.position()) {
+                x += point.x;
+                y += point.y;
+            }
+            select(code.text(), x / code.position().size(), y / code.position().size());
+        }
+        return result;
+    }
+    if (algorithm != QrAlgorithm::ZBar) {
+        throw std::invalid_argument("Unknown QR decoder algorithm");
     }
     zbar::Image image(width, height, "Y800", pixels, static_cast<unsigned long>(width) * height);
     const int count = scanner_.scan(image);
@@ -59,8 +96,6 @@ DecodeResult QrDecoder::decode(const uint8_t* pixels, unsigned width, unsigned h
         image.set_data(nullptr, 0);
         throw std::runtime_error("QR decoder could not scan the frame");
     }
-    DecodeResult result;
-    double best_distance = std::numeric_limits<double>::max();
     for (auto symbol = image.symbol_begin(); symbol != image.symbol_end(); ++symbol) {
         if (symbol->get_type() != zbar::ZBAR_QRCODE || symbol->get_location_size() == 0) {
             continue;
@@ -71,15 +106,7 @@ DecodeResult QrDecoder::decode(const uint8_t* pixels, unsigned width, unsigned h
             x += symbol->get_location_x(point);
             y += symbol->get_location_y(point);
         }
-        x = x / symbol->get_location_size() - width / 2.0;
-        y = y / symbol->get_location_size() - height / 2.0;
-        const double distance = x * x + y * y;
-        if (distance < best_distance) {
-            best_distance = distance;
-            result.found = true;
-            result.text = symbol->get_data();
-            result.supported = is_displayable_utf8(result.text);
-        }
+        select(symbol->get_data(), x / symbol->get_location_size(), y / symbol->get_location_size());
     }
     image.set_data(nullptr, 0);
     return result;

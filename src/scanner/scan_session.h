@@ -9,8 +9,8 @@
 namespace cartoon {
 
 enum class ScanState { Idle, Starting, Scanning, ScanPaused, Loading, Playing, AudioPaused, Finished, Error };
-enum class ScanKey { Ok, Pause, Previous, Next, Replay, Up, Down, Escape };
-enum class ScanAction { None, StartScan, PauseScan, StopScan, Play, PauseAudio, ResumeAudio, Volume, Quit };
+enum class ScanKey { Ok, Pause, Previous, Next, Replay, Escape };
+enum class ScanAction { None, StartScan, PauseScan, Play, PauseAudio, ResumeAudio, Quit };
 
 class ScanSession {
 public:
@@ -25,7 +25,6 @@ public:
     size_t selected() const { return selected_; }
     const AudioSource* current() const;
     const std::string& error() const { return error_; }
-    int volume() const { return volume_; }
     double position() const { return position_; }
     double duration() const { return duration_; }
 
@@ -36,7 +35,6 @@ private:
     size_t selected_{0};
     std::string error_;
     bool camera_error_{false};
-    int volume_{60};
     double position_{0};
     double duration_{0};
 };

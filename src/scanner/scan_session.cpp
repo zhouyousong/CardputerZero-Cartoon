@@ -37,12 +37,13 @@ ScanAction ScanSession::press(ScanKey key) {
     }
     if (key == ScanKey::Ok) {
         error_.clear();
+        if (state_ == ScanState::Starting || state_ == ScanState::Scanning) {
+            state_ = ScanState::Idle;
+            position_ = duration_ = 0;
+            return ScanAction::PauseScan;
+        }
         state_ = ScanState::Starting;
         return ScanAction::StartScan;
-    }
-    if (key == ScanKey::Up || key == ScanKey::Down) {
-        volume_ = std::clamp(volume_ + (key == ScanKey::Up ? 5 : -5), 0, 100);
-        return ScanAction::Volume;
     }
     if (key == ScanKey::Previous || key == ScanKey::Next) {
         if (history_.empty() ||
@@ -61,6 +62,9 @@ ScanAction ScanSession::press(ScanKey key) {
         return play_selected();
     }
     if (key == ScanKey::Pause) {
+        if (state_ == ScanState::Idle || state_ == ScanState::Finished) {
+            return play_selected();
+        }
         if (state_ == ScanState::Scanning || state_ == ScanState::Starting) {
             state_ = ScanState::ScanPaused;
             return ScanAction::PauseScan;
@@ -99,7 +103,7 @@ ScanAction ScanSession::decoded(const DecodeResult& result) {
     std::string error;
     if (!result.supported || !parse_audio_source(result.text, source, error)) {
         failed(error.empty() ? u8"二维码不是有效的音频路径" : std::move(error), true);
-        return ScanAction::StopScan;
+        return ScanAction::PauseScan;
     }
     history_.erase(std::remove_if(history_.begin(), history_.end(),
         [&source](const AudioSource& old) { return old.path == source.path; }), history_.end());

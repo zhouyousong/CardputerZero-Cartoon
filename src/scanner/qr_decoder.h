@@ -6,6 +6,8 @@
 
 namespace cartoon {
 
+enum class QrAlgorithm { ZBar, ZXing };
+
 struct DecodeResult {
     bool found{false};
     bool supported{false};
@@ -17,7 +19,8 @@ bool is_displayable_utf8(const std::string& text);
 class QrDecoder {
 public:
     QrDecoder();
-    DecodeResult decode(const uint8_t* pixels, unsigned width, unsigned height);
+    DecodeResult decode(const uint8_t* pixels, unsigned width, unsigned height,
+                        QrAlgorithm algorithm = QrAlgorithm::ZBar);
 
 private:
     zbar::ImageScanner scanner_;

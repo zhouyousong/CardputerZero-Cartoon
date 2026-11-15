@@ -21,7 +21,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             ca-certificates git build-essential cmake ninja-build pkg-config dpkg-dev \
             libfmt-dev libpng-dev libjpeg-dev libfreetype-dev zlib1g-dev \
-            libzbar-dev libqrencode-dev libcjson-dev mpv pulseaudio python3
+            libzbar-dev libzxing-dev libqrencode-dev libcjson-dev mpv pulseaudio python3
       - uses: actions/checkout@v4
         with:
           persist-credentials: false

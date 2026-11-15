@@ -6,7 +6,7 @@
 
 cmake_minimum_required(VERSION 3.31)
 
-project(cardputerzero_cartoon VERSION 0.2.2 LANGUAGES C CXX)
+project(cardputerzero_cartoon VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -632,7 +632,8 @@ add_library(cartoon_scanner STATIC
     src/scanner/scan_settings.cpp
 )
 target_include_directories(cartoon_scanner PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src/scanner")
-target_link_libraries(cartoon_scanner PUBLIC PkgConfig::ZBAR PkgConfig::CJSON Threads::Threads)
+find_package(ZXing 2.3 REQUIRED)
+target_link_libraries(cartoon_scanner PUBLIC PkgConfig::ZBAR ZXing::ZXing PkgConfig::CJSON Threads::Threads)
 target_link_libraries(${PROJECT_NAME}_core PUBLIC cartoon_scanner)
 
 include(CTest)

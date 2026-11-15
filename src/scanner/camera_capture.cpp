@@ -111,7 +111,7 @@ DecodeResult decode_frame(QrDecoder& decoder, const std::vector<uint8_t>& frame,
         throw std::invalid_argument("Decoder requires a complete camera luminance frame");
     }
     if (!settings.center_only) {
-        return decoder.decode(frame.data(), settings.width, settings.height);
+        return decoder.decode(frame.data(), settings.width, settings.height, settings.algorithm);
     }
     const auto width = settings.width / 2;
     const auto height = settings.height / 2;
@@ -120,7 +120,7 @@ DecodeResult decode_frame(QrDecoder& decoder, const std::vector<uint8_t>& frame,
         std::copy_n(frame.data() + (y + settings.height / 4) * settings.width + settings.width / 4,
                     width, cropped.data() + y * width);
     }
-    return decoder.decode(cropped.data(), width, height);
+    return decoder.decode(cropped.data(), width, height, settings.algorithm);
 }
 
 CameraCapture::~CameraCapture() {
@@ -131,17 +131,23 @@ void CameraCapture::start(const ScanSettings& settings) {
     if (!valid_settings(settings)) {
         throw std::invalid_argument("Invalid scanner settings");
     }
-    if (running_ && settings.width == settings_.width && settings.height == settings_.height &&
-        settings.decode_fps == settings_.decode_fps && settings.exposure == settings_.exposure &&
-        settings.center_only == settings_.center_only) {
-        resume();
-        std::fprintf(stderr, "Cartoon camera: warm scan resumed.\n");
-        return;
-    }
-    stop();
-    settings_ = settings;
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (running_ && settings.width == settings_.width && settings.height == settings_.height &&
+            settings.exposure == settings_.exposure) {
+            settings_ = settings;
+            update_ = {};
+            ++generation_;
+            paused_ = false;
+            std::fprintf(stderr, "Cartoon camera: warm scan resumed (%s).\n",
+                settings.algorithm == QrAlgorithm::ZBar ? "ZBar" : "ZXing-C++");
+            return;
+        }
+    }
+    stop();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        settings_ = settings;
         update_ = {};
         paused_ = false;
         ++generation_;
@@ -203,10 +209,15 @@ void CameraCapture::run() {
 }
 
 void CameraCapture::capture() {
+    ScanSettings capture_settings;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        capture_settings = settings_;
+    }
     CameraProcess process;
-    process.launch(settings_);
+    process.launch(capture_settings);
     QrDecoder decoder;
-    std::vector<uint8_t> frame(settings_.width * settings_.height * 3 / 2);
+    std::vector<uint8_t> frame(capture_settings.width * capture_settings.height * 3 / 2);
     size_t received = 0;
     auto last_frame = std::chrono::steady_clock::now();
     bool first_frame = true;
@@ -240,14 +251,19 @@ void CameraCapture::capture() {
             received = 0;
             first_frame = false;
             last_frame = std::chrono::steady_clock::now();
-            const auto generation = generation_.load();
-            const bool stale = frame_generation != generation;
-            frame_generation = generation;
-            if (paused_ || stale) {
-                continue;
+            uint64_t generation;
+            ScanSettings settings;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                generation = generation_;
+                const bool stale = frame_generation != generation;
+                frame_generation = generation;
+                if (stale) last_decode = {};
+                if (paused_ || stale) continue;
+                settings = settings_;
             }
             CameraUpdate next;
-            next.preview = make_preview(frame, settings_);
+            next.preview = make_preview(frame, settings);
             if (preview_generation != generation) {
                 std::lock_guard<std::mutex> lock(mutex_);
                 if (!paused_ && generation == generation_) {
@@ -257,9 +273,9 @@ void CameraCapture::capture() {
                 }
             }
             const auto now = std::chrono::steady_clock::now();
-            if (now - last_decode >= std::chrono::milliseconds(1000 / settings_.decode_fps)) {
+            if (now - last_decode >= std::chrono::milliseconds(1000 / settings.decode_fps)) {
                 last_decode = now;
-                next.result = decode_frame(decoder, frame, settings_);
+                next.result = decode_frame(decoder, frame, settings);
             }
             std::lock_guard<std::mutex> lock(mutex_);
             if (!paused_ && generation == generation_) {

@@ -16,7 +16,8 @@ bool valid_settings(const ScanSettings& settings) {
     return std::find(kCaptureWidths.begin(), kCaptureWidths.end(), settings.width) != kCaptureWidths.end() &&
         settings.height == settings.width * 3 / 4 &&
         (settings.decode_fps == 2 || settings.decode_fps == 5 || settings.decode_fps == 10) &&
-        settings.exposure >= -2 && settings.exposure <= 2;
+        settings.exposure >= -2 && settings.exposure <= 2 &&
+        (settings.algorithm == QrAlgorithm::ZBar || settings.algorithm == QrAlgorithm::ZXing);
 }
 
 std::string settings_path() {
@@ -41,12 +42,23 @@ ScanSettings load_settings(const std::string& path) {
     }
     ScanSettings settings;
     unsigned center;
+    unsigned algorithm = 0;
     std::string trailing;
     if (!(input >> settings.width >> settings.height >> settings.decode_fps >> settings.exposure >> center) ||
-        center > 1 || (input >> trailing) || input.bad() || !valid_settings(settings)) {
+        center > 1 || input.bad()) {
+        throw std::runtime_error(u8"扫码设置损坏；按 4 重新保存");
+    }
+    input >> std::ws;
+    // Older five-field settings deliberately retain the existing ZBar default.
+    if (input.peek() != std::char_traits<char>::eof() &&
+        (!(input >> algorithm) || algorithm > 1 || (input >> trailing))) {
         throw std::runtime_error(u8"扫码设置损坏；按 4 重新保存");
     }
     settings.center_only = center == 1;
+    settings.algorithm = static_cast<QrAlgorithm>(algorithm);
+    if (input.bad() || !valid_settings(settings)) {
+        throw std::runtime_error(u8"扫码设置损坏；按 4 重新保存");
+    }
     return settings;
 }
 
@@ -62,7 +74,8 @@ void save_settings(const std::string& path, const ScanSettings& settings) {
     }
     std::ostringstream contents;
     contents << settings.width << ' ' << settings.height << ' ' << settings.decode_fps << ' '
-             << settings.exposure << ' ' << settings.center_only << '\n';
+             << settings.exposure << ' ' << settings.center_only << ' '
+             << static_cast<unsigned>(settings.algorithm) << '\n';
     const auto text = contents.str();
     size_t offset = 0;
     bool success = true;

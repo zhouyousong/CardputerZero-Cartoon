@@ -107,6 +107,16 @@ void warm_capture_contract() {
     require(fixture_launches == 1 && fixture_pid == first_pid,
             "An unchanged scan must reuse the warm camera");
     camera.pause();
+    camera.start({320, 240, 5, 0, false, QrAlgorithm::ZXing});
+    wait_for_qr();
+    require(fixture_launches == 1 && fixture_pid == first_pid,
+            "Changing only the decoder must not restart warm capture");
+    camera.pause();
+    camera.start({320, 240, 2, 0, true, QrAlgorithm::ZXing});
+    wait_for_qr();
+    require(fixture_launches == 1 && fixture_pid == first_pid,
+            "Changing decode frequency or crop must not restart warm capture");
+    camera.pause();
     camera.start({480, 360, 5, 0, false});
     wait_for_qr();
     require(fixture_launches == 2 && fixture_pid != first_pid,
@@ -118,7 +128,7 @@ void warm_capture_contract() {
             "Stopping capture must reap the warm child");
 }
 
-void decode_contract() {
+void decode_contract(cartoon::QrAlgorithm algorithm) {
     cartoon::QrDecoder decoder;
     for (const auto& text : std::vector<std::string>{
              "https://example.com/cartoon?value=42",
@@ -126,12 +136,12 @@ void decode_contract() {
              std::string(1200, 'Q') + "\nlast line"}) {
         unsigned side;
         const auto pixels = qr(text, side);
-        const auto decoded = decoder.decode(pixels.data(), side, side);
+        const auto decoded = decoder.decode(pixels.data(), side, side, algorithm);
         require(decoded.found && decoded.supported, "Expected displayable QR text");
         require(decoded.text == text, "QR contents were truncated or changed");
     }
     std::vector<uint8_t> blank(320 * 240, 255);
-    require(!decoder.decode(blank.data(), 320, 240).found, "Blank frame is not a QR code");
+    require(!decoder.decode(blank.data(), 320, 240, algorithm).found, "Blank frame is not a QR code");
     require(!cartoon::is_displayable_utf8(std::string("a\0b", 3)), "Embedded NUL must be rejected");
     require(!cartoon::is_displayable_utf8("\xc0\xaf"), "Overlong UTF-8 must be rejected");
     require(!cartoon::is_displayable_utf8("\xed\xa0\x80"), "Surrogate UTF-8 must be rejected");
@@ -139,7 +149,7 @@ void decode_contract() {
     require(cartoon::is_displayable_utf8(u8"\U0001f600\n\ttext"), "Valid Unicode must be accepted");
 }
 
-void nearest_code_contract() {
+void nearest_code_contract(cartoon::QrAlgorithm algorithm) {
     unsigned side;
     const auto left = qr("left", side);
     unsigned center_side;
@@ -154,7 +164,7 @@ void nearest_code_contract() {
                     canvas.data() + (y + (height - side) / 2) * width + (width - side) / 2);
     }
     cartoon::QrDecoder decoder;
-    const auto decoded = decoder.decode(canvas.data(), width, height);
+    const auto decoded = decoder.decode(canvas.data(), width, height, algorithm);
     require(decoded.found && decoded.text == "center", "The code nearest the center must win");
 }
 
@@ -162,6 +172,12 @@ void interaction_contract() {
     using namespace cartoon;
     ScanSession session;
     require(session.state() == ScanState::Idle, "Launch must not open the camera");
+    require(session.press(ScanKey::Pause) == ScanAction::None, "6 without history must stay idle");
+    session.press(ScanKey::Ok);
+    require(session.press(ScanKey::Ok) == ScanAction::PauseScan && session.state() == ScanState::Idle,
+            "OK during camera startup must end scanning and return to idle");
+    session.decoded({true, true, "/stale.wav"});
+    require(session.history().empty(), "Ending a scan must discard queued results");
     require(session.press(ScanKey::Ok) == ScanAction::StartScan, "OK must start scanning");
     session.frame_received();
     require(session.press(ScanKey::Pause) == ScanAction::PauseScan, "6 must suspend decoding when pausing");
@@ -184,9 +200,18 @@ void interaction_contract() {
     session.playback({PlaybackState::Playing, 2, 4, {}});
     require(session.state() == ScanState::Starting, "Old playback events must not interrupt a scan");
     require(session.history().size() == 1, "Rescan must retain the displayed history");
+    session.frame_received();
+    require(session.press(ScanKey::Ok) == ScanAction::PauseScan && session.state() == ScanState::Idle,
+            "OK during scanning must return to idle without clearing history");
+    session.decoded({true, true, "/stale.wav"});
+    require(session.press(ScanKey::Pause) == ScanAction::Play &&
+            session.current()->path == "/home/pi/audio/first.wav" && session.position() == 0,
+            "6 after ending a scan must play the selected history item from the start");
+    session.press(ScanKey::Ok);
     session.failed("camera unplugged", true);
     require(session.press(ScanKey::Pause) == ScanAction::StartScan, "6 must retry a failed camera");
     require(session.error().empty(), "Retry must clear the previous camera error");
+    session.press(ScanKey::Ok);
     require(session.press(ScanKey::Escape) == ScanAction::Quit, "ESC must exit");
 
     for (const auto* path : {"/b.wav", "/c.wav", "/d.wav"}) {
@@ -202,21 +227,21 @@ void interaction_contract() {
     session.press(ScanKey::Next);
     require(session.press(ScanKey::Next) == ScanAction::None, "History must not wrap at the oldest");
     session.press(ScanKey::Ok);
+    session.press(ScanKey::Ok);
+    require(session.press(ScanKey::Pause) == ScanAction::Play && session.current()->path == "/b.wav",
+            "Idle playback must use the selected track, not always the latest one");
+    session.press(ScanKey::Ok);
     session.decoded({true, true, "/c.wav"});
     require(session.history().size() == 3 && session.history()[0].path == "/c.wav",
             "Duplicate scan must move to front without duplicating entries");
     session.playback({PlaybackState::Error, 0, 0, "network failed"});
     require(session.press(ScanKey::Pause) == ScanAction::Play, "6 must retry the current failed audio");
     session.press(ScanKey::Ok);
-    require(session.decoded({true, true, "not a path"}) == ScanAction::StopScan &&
+    require(session.decoded({true, true, "not a path"}) == ScanAction::PauseScan &&
             session.history().size() == 3, "Invalid QR must show an error without polluting history");
     session.press(ScanKey::Ok);
     require(session.suspend() == ScanAction::PauseScan && session.state() == ScanState::ScanPaused,
             "Settings must suspend decoding without forcing camera release");
-    for (int i = 0; i < 30; ++i) session.press(ScanKey::Down);
-    require(session.volume() == 0, "Volume must stop at zero");
-    for (int i = 0; i < 30; ++i) session.press(ScanKey::Up);
-    require(session.volume() == 100, "Volume must stop at 100");
     require(ScanSession{}.history().empty(), "History must not persist across sessions");
 }
 
@@ -241,11 +266,17 @@ void source_and_settings_contract() {
     std::filesystem::create_directory(directory);
     const auto path = (directory / "scanner.conf").string();
     require(load_settings(path).width == 320, "Absent settings must use initial defaults");
-    ScanSettings settings{640, 480, 2, -2, true};
+    ScanSettings settings{640, 480, 2, -2, true, QrAlgorithm::ZXing};
     save_settings(path, settings);
     const auto restored = load_settings(path);
     require(restored.width == 640 && restored.height == 480 && restored.decode_fps == 2 &&
-            restored.exposure == -2 && restored.center_only, "All scanner parameters must persist");
+            restored.exposure == -2 && restored.center_only && restored.algorithm == QrAlgorithm::ZXing,
+            "All scanner parameters including decoder selection must persist");
+    { std::ofstream file(path); file << "640 480 2 -2 1\n"; }
+    const auto legacy = load_settings(path);
+    require(legacy.algorithm == QrAlgorithm::ZBar && legacy.width == 640 &&
+            legacy.decode_fps == 2 && legacy.center_only,
+            "Existing five-field settings must load unchanged with the ZBar default");
     for (const unsigned width : {480, 800, 1280}) {
         settings.width = width;
         settings.height = width * 3 / 4;
@@ -257,17 +288,20 @@ void source_and_settings_contract() {
         require(preview.size() == kPreviewWidth * kPreviewHeight && preview.back() == 0xffff,
                 "New resolutions must retain fixed preview size and orientation");
     }
-    { std::ofstream file(path); file << "640 240 99 8 2"; }
-    bool rejected = false;
-    try { load_settings(path); } catch (const std::runtime_error&) { rejected = true; }
-    require(rejected, "Corrupt settings must report an error, not silently reset");
+    for (const char* invalid : {"640 240 99 8 2", "640 480 5 0 0 2", "640 480 5 0 0 junk",
+                                "640 480 5 0 0 1 extra"}) {
+        { std::ofstream file(path); file << invalid; }
+        bool rejected = false;
+        try { load_settings(path); } catch (const std::runtime_error&) { rejected = true; }
+        require(rejected, "Corrupt settings/unknown decoder must report an error, not silently reset");
+    }
     std::filesystem::remove(path);
     std::filesystem::remove(directory);
 }
 
-void scan_region_contract() {
+void scan_region_contract(cartoon::QrAlgorithm algorithm) {
     using namespace cartoon;
-    ScanSettings settings{640, 480, 10, 2, false};
+    ScanSettings settings{640, 480, 10, 2, false, algorithm};
     unsigned side;
     const auto code = qr("/song.wav", side);
     std::vector<uint8_t> frame(settings.width * settings.height, 255);
@@ -334,11 +368,13 @@ int main(int argc, char** argv) {
             return camera_fixture(static_cast<unsigned>(std::stoul(argv[2])),
                                   static_cast<unsigned>(std::stoul(argv[3])));
         }
-        decode_contract();
-        nearest_code_contract();
+        for (const auto algorithm : {cartoon::QrAlgorithm::ZBar, cartoon::QrAlgorithm::ZXing}) {
+            decode_contract(algorithm);
+            nearest_code_contract(algorithm);
+            scan_region_contract(algorithm);
+        }
         interaction_contract();
         source_and_settings_contract();
-        scan_region_contract();
         preview_orientation_contract();
         warm_capture_contract();
         std::puts("PASS: QR decoding, preview, audio/history controls, settings/crop and warm camera reuse/restart/cleanup.");

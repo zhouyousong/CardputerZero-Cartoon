@@ -9,7 +9,9 @@ A camera QR audio player for the 320x170 CardputerZero, based on the
   The left 160x120 camera tile is gray whenever scanning is inactive.
   The right side always shows up to three recent audio tracks, newest first,
   the selected track highlighted, playback status, elapsed time and progress.
-- **8 / OK / Enter**: stop audio and start a new scan.
+- **8 / OK / Enter**: stop audio and start a scan. During camera startup or
+  active scanning, press again to end recognition and return to the idle gray
+  tile without clearing history or releasing the warm camera.
 - A grayscale preview runs at up to 10 fps; QR decoding runs at up to 5 fps.
   The full 320x240 grayscale camera frame is decoded, not just the guide box.
 - The preview is rotated 180 degrees to correct the mounted camera orientation.
@@ -17,24 +19,32 @@ A camera QR audio player for the 320x170 CardputerZero, based on the
 - On a valid audio QR, decoding pauses and audio starts automatically.
   The closest QR code to the scan region center wins when several are visible.
 - **6**: pause/resume scanning or audio; retry the current operation on errors.
-  Pausing scanning discards queued results and keeps the camera warm for 30 seconds.
+  From idle with history (or after audio ends), play the selected track from the
+  start; with no history, stay idle. Pausing scanning preserves its paused state,
+  unlike ending the scan with OK/8. Both discard queued results.
 - **5 / 7** (also **Left / Right**): previous/next track in the visible history, immediately
   stopping the current operation and playing the chosen track from the start.
   History does not wrap at the ends.
 - **R**: replay the selected track from the start.
-- **Up / Down**: volume, in steps of 5%, bounded to 0-100%.
+- **System volume keys**: use the launcher's existing volume/mute controls.
+  The app does not change the system mixer or bind Up/Down to volume. Playback
+  uses 100% player gain rather than a second app-level volume multiplier, so
+  perceived loudness may be higher than the previous 60% app default.
 - **4** (also **S**): scanner settings (see below).
 - **ESC**: exit and release both camera and player.
 
 The five bottom hints align with the physical 4-8 keys rather than equal-width
-screen columns. Replay, volume and exit hints stay in the header.
+screen columns. Each shows its action above a vertical `|` alignment mark, not
+a numeric key label. Scan/stop and play/pause/retry hints follow the current state.
+Replay, system volume and exit hints stay in the header; no independent app
+volume percentage is shown.
 After recognition or scan pause, the camera tile is gray and QR decoding/preview
-conversion stop, but capture continues in memory for up to 30 seconds. Frames
-are drained and discarded to avoid blocking the camera pipe. A scan within that
-window reuses capture when settings are unchanged, discards the in-flight old
-frame, and displays the first fresh preview before decoding it. Switching/replaying
-history does not extend the standby deadline. Timeout or exit releases capture;
-the first scan, a scan after timeout, or changed settings require a cold start.
+conversion stop, but capture stays warm until app exit, with no inactivity timeout.
+Frames are drained and discarded to avoid blocking the camera pipe. A new scan
+reuses capture, discards the in-flight old frame, and displays the first fresh
+preview before decoding it. Changing decoder, decode rate or scan region does
+not restart capture; changing capture size/exposure or recovering from a camera
+failure requires a cold start. Exit releases the camera and player.
 Warm standby still occupies the camera and consumes power and memory.
 
 Audio sources must be an absolute Linux file path (for example
@@ -52,9 +62,9 @@ restarting the camera. Unknown duration is shown as `--:--`, not a fake progress
 ## Scanner settings
 
 Press **4** for the separate settings page. Entering it pauses scanning/audio;
-returning does not automatically resume either. **F/X** selects a row,
-**Z/C** changes it, **OK** saves and returns, and **ESC** cancels changes.
-Arrow keys remain equivalent alternatives.
+returning does not automatically resume either. **Up/Down** selects a row,
+**Left/Right** changes it, **OK** saves and returns, and **ESC** cancels changes.
+The overlapping F/X/Z/C letter keys remain equivalent alternatives.
 New values apply on the next scan:
 
 - Capture resolution: 320x240 (default), 480x360, 640x480, 800x600, or 1280x960.
@@ -64,10 +74,17 @@ New values apply on the next scan:
 - Exposure compensation: -2 to +2 EV, default 0 (not optical focus).
 - Decode region: full frame (default) or the central 50% width and height.
   The guide outlines the actual region; preview orientation remains 180 degrees.
+- QR algorithm: ZBar (existing default) or ZXing-C++ 2.3. Both read the same
+  grayscale scan region, decode only QR codes, and select the nearest recognized
+  code to the region center. ZXing uses its built-in harder/rotation/inversion
+  search with plain UTF-8 text output; there is no automatic engine fallback or
+  extra image enhancement, and no guarantee that either handles all blurred images.
 
 Settings persist atomically in `$XDG_CONFIG_HOME/cardputerzero-cartoon/scanner.conf`
 or `$HOME/.config/cardputerzero-cartoon/scanner.conf`. Missing settings use defaults;
 unreadable or corrupt settings report an error and can be replaced through **4**.
+Existing five-field settings load with ZBar; new saves append the decoder choice
+as a sixth field (0 = ZBar, 1 = ZXing-C++).
 No autofocus control is exposed because this IMX219 has no usable focus actuator.
 
 ## Privacy
@@ -86,7 +103,7 @@ The initial target is the IMX219 camera on CardputerZero with Debian 13 ARM64.
 Capture uses the device's existing `/usr/bin/rpicam-vid` and libcamera.
 Audio uses `/usr/bin/mpv` with private Unix-socket JSON IPC and the user's
 PulseAudio/PipeWire output. Active QR decoding and playback do not run
-simultaneously; warm camera capture can coexist with playback for 30 seconds.
+simultaneously; warm camera capture can coexist with playback until app exit.
 The screen uses `/dev/fb0`; keys use the template's evdev input routing.
 Run as the normal device user with `video` and `input` group membership,
 preferably through APPLaunch, not as root.
@@ -114,7 +131,7 @@ On Debian 13 ARM64:
 ```sh
 sudo apt-get install build-essential cmake ninja-build pkg-config git \
     libfmt-dev libpng-dev libjpeg-dev libfreetype-dev zlib1g-dev \
-    libzbar-dev libqrencode-dev libcjson-dev dpkg-dev
+    libzbar-dev libzxing-dev libqrencode-dev libcjson-dev dpkg-dev
 cmake --preset cp0-native -DCM0_SDK_ROOT=/ -DCM0_ALLOW_FETCH_DEPS=OFF
 cmake --build --preset cp0-native-rel --parallel 1
 ctest --test-dir build/cp0-native -C Release --output-on-failure
@@ -134,7 +151,8 @@ Removing it uses `sudo apt remove cardputerzero-cartoon`.
 Generated QR fixtures cover exact URL, Unicode and long-text decoding, blank
 frames, unsupported UTF-8/control data, and center selection. Interaction tests
 cover idle launch, scan/audio pause, stale-result suppression, autoplay, three-item
-deduplicated history, bounded previous/next, replay, retry, volume and exit.
+deduplicated history, bounded previous/next, replay, retry, scan ending and
+selected-track playback from idle.
 Settings tests cover persistence and malformed input; region tests verify
 center-only cropping and fixed preview scaling for the capture resolutions. An asymmetric four-corner
 frame checks the 180-degree preview rotation.
@@ -143,8 +161,10 @@ server using a generated four-second tone (5% volume); it needs mpv installed.
 Hardware camera/display tests remain separate from cloud tests.
 The scanner test executable redirects camera process launches to its own YUV/QR
 fixture, exercising real pipes and child cleanup without requiring cloud hardware.
-It verifies that QR success retains capture, a rescan reuses it, and changed
-settings or exit replace/reap the child.
+Both QR engines are checked against the same URL, Unicode, long-text,
+nearest-center and scan-region fixtures. The pipe/child fixture verifies QR
+success retains capture, a rescan and decoder/rate/crop changes reuse it, and
+changed capture settings or exit replace/reap the child.
 
 ## Troubleshooting
 
@@ -157,4 +177,5 @@ settings or exit replace/reap the child.
 ## License
 
 MIT; see [LICENSE](LICENSE). Template notices and third-party asset licenses are
-retained.
+retained. Dynamically linked ZBar is LGPL-2.1 and ZXing-C++ is Apache-2.0;
+their Debian runtime packages provide the corresponding license notices.

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "qr_decoder.h"
+
 #include <array>
 #include <string>
 
@@ -13,6 +15,7 @@ struct ScanSettings {
     unsigned decode_fps{5};
     int exposure{0};
     bool center_only{false};
+    QrAlgorithm algorithm{QrAlgorithm::ZBar};
 };
 
 bool valid_settings(const ScanSettings& settings);
