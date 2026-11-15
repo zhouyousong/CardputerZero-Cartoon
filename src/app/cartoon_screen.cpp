@@ -78,9 +78,10 @@ public:
         lv_obj_set_size(progress_, 150, 3);
         lv_bar_set_range(progress_, 0, 1000);
         lv_obj_set_style_bg_color(progress_, lv_color_hex(0x45d6b3), LV_PART_INDICATOR);
-        footer_ = label(root_, 4, 146, 312, "");
+        footer_ = label(root_, 4, 142, 312, "");
         lv_obj_set_style_text_font(footer_, small ? small : &lv_font_montserrat_12, 0);
-        lv_obj_set_height(footer_, 24);
+        lv_obj_set_height(footer_, 28);
+        lv_obj_set_style_text_line_space(footer_, -1, 0);
 
         settings_screen_ = lv_obj_create(root_);
         lv_obj_remove_style_all(settings_screen_);
