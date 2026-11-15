@@ -21,7 +21,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             ca-certificates git build-essential cmake ninja-build pkg-config dpkg-dev \
             libfmt-dev libpng-dev libjpeg-dev libfreetype-dev zlib1g-dev \
-            libzbar-dev libqrencode-dev
+            libzbar-dev libqrencode-dev libcjson-dev mpv pulseaudio python3
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -35,10 +35,46 @@ jobs:
         run: cmake --build --preset cp0-native-rel --parallel 2
       - name: Test scanner and controls
         run: ctest --test-dir build/cp0-native -C Release --output-on-failure
+      - name: Test real local and HTTP audio playback
+        run: |
+          set -eu
+          pulse_pid=
+          http_pid=
+          cleanup() {
+            if [ -n "${http_pid}" ]; then kill "${http_pid}" 2>/dev/null || true; fi
+            if [ -n "${pulse_pid}" ]; then kill "${pulse_pid}" 2>/dev/null || true; fi
+          }
+          trap cleanup EXIT
+          printf '%s\n' \
+            'load-module module-null-sink sink_name=cartoon_test' \
+            'load-module module-native-protocol-unix socket=/tmp/cartoon-test-pulse auth-anonymous=1' \
+            > /tmp/cartoon-pulse.conf
+          pulseaudio --system -n --daemonize=no --exit-idle-time=-1 \
+            --file=/tmp/cartoon-pulse.conf > /tmp/cartoon-pulse.log 2>&1 &
+          pulse_pid=$!
+          export PULSE_SERVER=unix:/tmp/cartoon-test-pulse
+          for attempt in $(seq 1 30); do
+            if pactl info > /dev/null 2>&1; then break; fi
+            sleep 0.2
+          done
+          if ! pactl info; then cat /tmp/cartoon-pulse.log; exit 1; fi
+          build/cp0-native/Release/audio_player_tests
+          mkdir -p /tmp/cartoon-http
+          build/cp0-native/Release/audio_player_tests /tmp/cartoon-http/tone.wav --fixture-only
+          python3 -m http.server 18765 --bind 127.0.0.1 --directory /tmp/cartoon-http \
+            > /tmp/cartoon-http.log 2>&1 &
+          http_pid=$!
+          python3 -c 'import time, urllib.request; time.sleep(0.5); assert urllib.request.urlopen("http://127.0.0.1:18765/tone.wav").status == 200'
+          build/cp0-native/Release/audio_player_tests http://127.0.0.1:18765/tone.wav
       - name: Package
         run: cpack --config build/cp0-native/CPackConfig.cmake -C Release -G DEB
       - uses: actions/upload-artifact@v4
         with:
           name: cardputerzero-cartoon-arm64
           path: dist/*.deb
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cartoon-device-tests-arm64
+          path: build/cp0-native/Release/audio_player_tests
           if-no-files-found: error

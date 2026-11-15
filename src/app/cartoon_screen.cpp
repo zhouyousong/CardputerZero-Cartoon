@@ -1,15 +1,21 @@
 #include "cartoon_screen.h"
 
 #include "asset_manager.h"
+#include "audio_player.h"
 #include "camera_capture.h"
 #include "linux_input.h"
 #include "logger.h"
 #include "scan_session.h"
+#include "scan_settings.h"
 #include "src/drivers/display/fb/lv_linux_fbdev.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
 
+#include <array>
+#include <algorithm>
 #include <csignal>
 #include <cstdio>
+#include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -17,9 +23,13 @@ namespace cartoon {
 namespace {
 
 volatile std::sig_atomic_t interrupted = 0;
+void interrupt(int) { interrupted = 1; }
 
-void interrupt(int) {
-    interrupted = 1;
+std::string time_text(double seconds) {
+    const auto value = static_cast<unsigned>(std::clamp(seconds, 0.0, 359999.0));
+    char text[24];
+    std::snprintf(text, sizeof(text), "%02u:%02u", value / 60, value % 60);
+    return text;
 }
 
 class ScannerScreen {
@@ -31,37 +41,62 @@ public:
         lv_obj_set_style_bg_color(root_, lv_color_hex(0x101820), 0);
         lv_obj_set_style_bg_opa(root_, LV_OPA_COVER, 0);
         lv_obj_remove_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
-        auto* text_font = assets.load_standard_font(14, app::StandardFontWeight::Regular);
-        lv_obj_set_style_text_font(root_, text_font ? text_font : &lv_font_montserrat_14, 0);
+        auto* font = assets.load_standard_font(12, app::StandardFontWeight::Regular);
+        auto* small = assets.load_standard_font(10, app::StandardFontWeight::Regular);
+        lv_obj_set_style_text_font(root_, font ? font : &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(root_, lv_color_hex(0xf0f4f8), 0);
+        title_ = label(root_, 4, 1, 215, u8"Cartoon · 扫码听音频");
+        volume_ = label(root_, 240, 1, 77, "");
 
-        title_ = label(root_, 6, 1, 308, "Cartoon | Starting camera...");
-        auto* small_font = assets.load_standard_font(11, app::StandardFontWeight::Regular);
-        footer_ = label(root_, 5, 151, 310, "5 Pause/Resume       ESC Exit");
-        lv_obj_set_style_text_font(footer_, small_font ? small_font : &lv_font_montserrat_12, 0);
-
-        preview_ = lv_image_create(root_);
-        lv_obj_set_pos(preview_, 80, 25);
+        camera_box_ = lv_obj_create(root_);
+        lv_obj_remove_style_all(camera_box_);
+        lv_obj_set_pos(camera_box_, 0, 22);
+        lv_obj_set_size(camera_box_, 160, 120);
+        lv_obj_set_style_bg_color(camera_box_, lv_color_hex(0x38414b), 0);
+        lv_obj_set_style_bg_opa(camera_box_, LV_OPA_COVER, 0);
+        lv_obj_remove_flag(camera_box_, LV_OBJ_FLAG_SCROLLABLE);
+        preview_ = lv_image_create(camera_box_);
         lv_obj_set_size(preview_, kPreviewWidth, kPreviewHeight);
-        guide_ = lv_obj_create(root_);
+        guide_ = lv_obj_create(camera_box_);
         lv_obj_remove_style_all(guide_);
-        lv_obj_set_pos(guide_, 106, 39);
-        lv_obj_set_size(guide_, 108, 92);
         lv_obj_set_style_border_width(guide_, 1, 0);
         lv_obj_set_style_border_color(guide_, lv_color_hex(0x45d6b3), 0);
         lv_obj_remove_flag(guide_, LV_OBJ_FLAG_SCROLLABLE);
-        hint_ = label(root_, 15, 73, 290, "Aim camera at a QR code");
+        hint_ = label(camera_box_, 4, 42, 152, u8"未扫描\n按 OK 开始");
         lv_obj_set_style_text_align(hint_, LV_TEXT_ALIGN_CENTER, 0);
+        label(root_, 166, 22, 150, u8"最近音频");
+        for (size_t i = 0; i < tracks_.size(); ++i) {
+            tracks_[i] = label(root_, 166, 41 + static_cast<int>(i) * 20, 150, "");
+            lv_label_set_long_mode(tracks_[i], LV_LABEL_LONG_DOTS);
+            lv_obj_set_height(tracks_[i], 18);
+        }
+        status_ = label(root_, 166, 102, 150, u8"等待扫码");
+        lv_label_set_long_mode(status_, LV_LABEL_LONG_SCROLL_CIRCULAR);
+        elapsed_ = label(root_, 166, 121, 150, "");
+        progress_ = lv_bar_create(root_);
+        lv_obj_set_pos(progress_, 166, 138);
+        lv_obj_set_size(progress_, 150, 3);
+        lv_bar_set_range(progress_, 0, 1000);
+        lv_obj_set_style_bg_color(progress_, lv_color_hex(0x45d6b3), LV_PART_INDICATOR);
+        footer_ = label(root_, 4, 146, 312, "");
+        lv_obj_set_style_text_font(footer_, small ? small : &lv_font_montserrat_12, 0);
+        lv_obj_set_height(footer_, 24);
 
-        body_ = lv_obj_create(root_);
-        lv_obj_remove_style_all(body_);
-        lv_obj_set_pos(body_, 5, 24);
-        lv_obj_set_size(body_, 310, 120);
-        lv_obj_set_scroll_dir(body_, LV_DIR_VER);
-        lv_obj_set_scrollbar_mode(body_, LV_SCROLLBAR_MODE_AUTO);
-        result_ = label(body_, 0, 0, 300, "");
-        lv_label_set_long_mode(result_, LV_LABEL_LONG_WRAP);
-        lv_obj_add_flag(body_, LV_OBJ_FLAG_HIDDEN);
+        settings_screen_ = lv_obj_create(root_);
+        lv_obj_remove_style_all(settings_screen_);
+        lv_obj_set_size(settings_screen_, 320, 170);
+        lv_obj_set_style_bg_color(settings_screen_, lv_color_hex(0x101820), 0);
+        lv_obj_set_style_bg_opa(settings_screen_, LV_OPA_COVER, 0);
+        lv_obj_remove_flag(settings_screen_, LV_OBJ_FLAG_SCROLLABLE);
+        settings_title_ = label(settings_screen_, 6, 2, 308, u8"扫码设置");
+        lv_label_set_long_mode(settings_title_, LV_LABEL_LONG_SCROLL_CIRCULAR);
+        for (size_t i = 0; i < setting_rows_.size(); ++i) {
+            setting_rows_[i] = label(settings_screen_, 8, 30 + static_cast<int>(i) * 26, 304, "");
+        }
+        auto* settings_footer = label(settings_screen_, 5, 145, 310,
+            u8"↑↓ 选择  ←→ 调值  OK 保存  ESC 取消");
+        lv_obj_set_style_text_font(settings_footer, small ? small : &lv_font_montserrat_12, 0);
+        lv_obj_add_flag(settings_screen_, LV_OBJ_FLAG_HIDDEN);
 
         image_.header.magic = LV_IMAGE_HEADER_MAGIC;
         image_.header.cf = LV_COLOR_FORMAT_RGB565;
@@ -69,13 +104,21 @@ public:
         image_.header.h = kPreviewHeight;
         image_.header.stride = kPreviewWidth * sizeof(uint16_t);
         image_.data_size = kPreviewWidth * kPreviewHeight * sizeof(uint16_t);
+        try {
+            config_path_ = settings_path();
+            settings_ = load_settings(config_path_);
+        } catch (const std::exception& error) {
+            config_error_ = error.what();
+            fail(config_error_, true);
+        }
         platform::set_global_key_listener(key_listener, this);
         lv_screen_load(root_);
-        camera_.start();
+        show_state();
     }
 
     ~ScannerScreen() {
         camera_.stop();
+        player_.stop();
         platform::clear_global_key_listener(key_listener, this);
         lv_image_cache_drop(&image_);
         lv_obj_delete(root_);
@@ -85,30 +128,31 @@ public:
 
     void update() {
         auto next = camera_.take_update();
-        const auto previous = session_.state();
-        if (!next.error.empty()) {
-            session_.failed(std::move(next.error));
+        const auto state = session_.state();
+        const bool scanning = state == ScanState::Starting || state == ScanState::Scanning;
+        if (scanning && !next.error.empty()) {
+            camera_.stop();
+            fail(std::move(next.error), true);
+        } else if (scanning && !next.preview.empty()) {
+            lv_image_cache_drop(&image_);
+            pixels_ = std::move(next.preview);
+            image_.data = reinterpret_cast<const uint8_t*>(pixels_.data());
+            lv_image_set_src(preview_, &image_);
+            lv_obj_add_flag(hint_, LV_OBJ_FLAG_HIDDEN);
+            session_.frame_received();
+            if (state == ScanState::Starting) {
+                std::fprintf(stderr, "Cartoon: camera preview active.\n");
+            }
+            if (next.result.found) {
+                execute(session_.decoded(next.result));
+                if (session_.state() == ScanState::Error) {
+                    std::fprintf(stderr, "Cartoon: %s\n", session_.error().c_str());
+                }
+            }
             show_state();
-            return;
         }
-        if (next.preview.empty() ||
-            (previous != ScanState::Starting && previous != ScanState::Scanning)) {
-            return;
-        }
-        lv_image_cache_drop(&image_);
-        pixels_ = std::move(next.preview);
-        image_.data = reinterpret_cast<const uint8_t*>(pixels_.data());
-        lv_image_set_src(preview_, &image_);
-        lv_obj_add_flag(hint_, LV_OBJ_FLAG_HIDDEN);
-        session_.frame_received();
-        if (next.result.found) {
-            session_.decoded(std::move(next.result));
-            std::fprintf(stderr, "Cartoon: QR result ready (%zu bytes); waiting for OK.\n",
-                         session_.result().text.size());
-        } else if (previous == ScanState::Starting) {
-            std::fprintf(stderr, "Cartoon: camera preview active.\n");
-        }
-        if (session_.state() != previous) {
+        if (auto audio = player_.take_update()) {
+            session_.playback(*audio);
             show_state();
         }
     }
@@ -122,84 +166,189 @@ private:
         return object;
     }
 
-    void show_state() {
-        const auto state = session_.state();
-        const bool reading = state == ScanState::Result || state == ScanState::Error;
-        if (reading) {
-            lv_obj_add_flag(preview_, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(guide_, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(hint_, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_remove_flag(body_, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_scroll_to_y(body_, 0, LV_ANIM_OFF);
-            lv_label_set_text(footer_, "UP/DOWN Scroll    OK Scan again    ESC Exit");
-            if (state == ScanState::Error) {
-                lv_label_set_text(title_, "Camera error | OK Retry");
-                lv_label_set_text(result_, session_.error().c_str());
-            } else if (!session_.result().supported) {
-                lv_label_set_text(title_, "QR found | Unsupported content");
-                lv_label_set_text(result_, "This QR code is not displayable UTF-8 text.\nPress OK to scan again.");
-            } else {
-                const auto& text = session_.result().text;
-                const bool link = text.rfind("https://", 0) == 0 || text.rfind("http://", 0) == 0;
-                lv_label_set_text(title_, link ? "QR found | Link" : "QR found | Text");
-                lv_label_set_text(result_, text.empty() ? "(Empty QR text)" : text.c_str());
+    void fail(std::string error, bool camera_error) {
+        std::fprintf(stderr, "Cartoon: %s\n", error.c_str());
+        session_.failed(std::move(error), camera_error);
+    }
+
+    void execute(ScanAction action) {
+        try {
+            switch (action) {
+                case ScanAction::StartScan:
+                    player_.stop();
+                    if (!config_error_.empty()) {
+                        fail(config_error_, true);
+                        break;
+                    }
+                    camera_.start(settings_);
+                    break;
+                case ScanAction::StopScan:
+                    camera_.stop();
+                    break;
+                case ScanAction::Play:
+                    camera_.stop();
+                    player_.play(session_.current()->path, session_.volume());
+                    break;
+                case ScanAction::PauseAudio: player_.set_paused(true); break;
+                case ScanAction::ResumeAudio: player_.set_paused(false); break;
+                case ScanAction::Volume: player_.set_volume(session_.volume()); break;
+                case ScanAction::Quit: running_ = false; break;
+                case ScanAction::None: break;
             }
-        } else {
-            lv_obj_add_flag(body_, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_remove_flag(preview_, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_remove_flag(guide_, LV_OBJ_FLAG_HIDDEN);
-            lv_label_set_text(footer_, "5 Pause/Resume       ESC Exit");
-            lv_label_set_text(title_, state == ScanState::Paused ? "Cartoon | Paused" :
-                                      state == ScanState::Starting ? "Cartoon | Starting camera..." :
-                                                                    "Cartoon | Scanning");
+        } catch (const std::exception& error) {
+            fail(error.what(), action == ScanAction::StartScan);
         }
     }
 
+    void show_state() {
+        lv_label_set_text_fmt(volume_, u8"音量 %d%%", session_.volume());
+        const auto state = session_.state();
+        const bool scanning = state == ScanState::Starting || state == ScanState::Scanning;
+        if (scanning) {
+            lv_obj_remove_flag(preview_, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(guide_, LV_OBJ_FLAG_HIDDEN);
+            const int margin_x = settings_.center_only ? 40 : 2;
+            const int margin_y = settings_.center_only ? 30 : 2;
+            lv_obj_set_pos(guide_, margin_x, margin_y);
+            lv_obj_set_size(guide_, 160 - 2 * margin_x, 120 - 2 * margin_y);
+            if (state == ScanState::Starting) {
+                lv_obj_add_flag(preview_, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_remove_flag(hint_, LV_OBJ_FLAG_HIDDEN);
+                lv_label_set_text(hint_, u8"正在启动摄像头");
+            }
+        } else {
+            lv_obj_add_flag(preview_, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(guide_, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(hint_, LV_OBJ_FLAG_HIDDEN);
+            lv_label_set_text(hint_, state == ScanState::ScanPaused ?
+                u8"扫码已暂停\n5 继续" : u8"未扫描\nOK 扫码");
+        }
+        for (size_t i = 0; i < tracks_.size(); ++i) {
+            const bool selected = i < session_.history().size() && i == session_.selected();
+            lv_obj_set_style_text_color(tracks_[i], lv_color_hex(selected ? 0x45d6b3 : 0xf0f4f8), 0);
+            lv_label_set_long_mode(tracks_[i], selected ? LV_LABEL_LONG_SCROLL_CIRCULAR : LV_LABEL_LONG_DOTS);
+            const auto text = i < session_.history().size() ?
+                std::string(selected ? "> " : "  ") + session_.history()[i].title : "";
+            if (text != track_text_[i]) {
+                track_text_[i] = text;
+                lv_label_set_text(tracks_[i], text.c_str());
+            }
+        }
+        const char* status = u8"等待扫码";
+        switch (state) {
+            case ScanState::Starting: status = u8"正在启动扫码"; break;
+            case ScanState::Scanning: status = u8"正在扫描"; break;
+            case ScanState::ScanPaused: status = u8"扫码已暂停"; break;
+            case ScanState::Loading: status = u8"加载 / 缓冲中"; break;
+            case ScanState::Playing: status = u8"正在播放"; break;
+            case ScanState::AudioPaused: status = u8"播放已暂停"; break;
+            case ScanState::Finished: status = u8"播放结束"; break;
+            case ScanState::Error: status = session_.error().c_str(); break;
+            case ScanState::Idle: break;
+        }
+        if (status_text_ != status) {
+            status_text_ = status;
+            lv_label_set_text(status_, status);
+        }
+        const auto time = session_.current() ?
+            time_text(session_.position()) + " / " +
+                (session_.duration() > 0 ? time_text(session_.duration()) : "--:--") : "";
+        lv_label_set_text(elapsed_, time.c_str());
+        lv_bar_set_value(progress_, session_.duration() > 0 ?
+            static_cast<int>(std::clamp(session_.position() / session_.duration(), 0.0, 1.0) * 1000) : 0,
+            LV_ANIM_OFF);
+        lv_label_set_text(footer_, state == ScanState::Error ?
+            u8"5 重试  OK 扫码  S 设置  ESC 退出\n← 上一曲  → 下一曲  ↑↓ 音量" :
+            u8"OK 扫码  5 暂停/继续  R 重播  S 设置\n← 上一曲  → 下一曲  ↑↓ 音量  ESC 退出");
+    }
+
+    void show_settings() {
+        const std::array<std::string, 4> values = {
+            u8"采集分辨率: " + std::to_string(draft_.width) + " x " + std::to_string(draft_.height),
+            u8"扫码频率: " + std::to_string(draft_.decode_fps) + u8" 次/秒",
+            u8"曝光补偿: " + std::to_string(draft_.exposure) + " EV",
+            std::string(u8"扫码区域: ") + (draft_.center_only ? u8"中心 50%" : u8"全画面")
+        };
+        for (size_t i = 0; i < values.size(); ++i) {
+            lv_label_set_text(setting_rows_[i], values[i].c_str());
+            lv_obj_set_style_text_color(setting_rows_[i],
+                lv_color_hex(i == setting_index_ ? 0x45d6b3 : 0xf0f4f8), 0);
+        }
+    }
+
+    bool settings_key(uint32_t key) {
+        if (key == LV_KEY_ESC) {
+            in_settings_ = false;
+            lv_obj_add_flag(settings_screen_, LV_OBJ_FLAG_HIDDEN);
+        } else if (key == LV_KEY_ENTER) {
+            try {
+                if (config_path_.empty()) config_path_ = settings_path();
+                save_settings(config_path_, draft_);
+                settings_ = draft_;
+                config_error_.clear();
+                in_settings_ = false;
+                lv_obj_add_flag(settings_screen_, LV_OBJ_FLAG_HIDDEN);
+                std::fprintf(stderr, "Cartoon: scanner settings saved (%ux%u, %u fps, EV %d, center %d).\n",
+                    settings_.width, settings_.height, settings_.decode_fps, settings_.exposure,
+                    settings_.center_only);
+            } catch (const std::exception& error) {
+                std::fprintf(stderr, "Cartoon settings: %s\n", error.what());
+                lv_label_set_text(settings_title_, error.what());
+            }
+        } else if (key == LV_KEY_UP && setting_index_ > 0) {
+            --setting_index_;
+        } else if (key == LV_KEY_DOWN && setting_index_ + 1 < setting_rows_.size()) {
+            ++setting_index_;
+        } else if (key == LV_KEY_LEFT || key == LV_KEY_RIGHT) {
+            const int step = key == LV_KEY_RIGHT ? 1 : -1;
+            if (setting_index_ == 0) {
+                draft_.width = draft_.width == 320 ? 640 : 320;
+                draft_.height = draft_.width * 3 / 4;
+            } else if (setting_index_ == 1) {
+                constexpr std::array<unsigned, 3> rates{2, 5, 10};
+                const auto index = std::find(rates.begin(), rates.end(), draft_.decode_fps) - rates.begin();
+                draft_.decode_fps = rates[static_cast<size_t>(std::clamp(static_cast<int>(index) + step, 0, 2))];
+            } else if (setting_index_ == 2) {
+                draft_.exposure = std::clamp(draft_.exposure + step, -2, 2);
+            } else {
+                draft_.center_only = !draft_.center_only;
+            }
+        }
+        show_settings();
+        show_state();
+        return true;
+    }
+
     bool key(uint32_t key, bool held) {
-        if (held) {
+        if (held) return true;
+        if (in_settings_) return settings_key(key);
+        if (key == 's' || key == 'S') {
+            execute(session_.suspend());
+            if (session_.state() == ScanState::Loading) player_.set_paused(true);
+            draft_ = settings_;
+            setting_index_ = 0;
+            in_settings_ = true;
+            lv_label_set_text(settings_title_, u8"扫码设置（保存后下次扫码生效）");
+            show_settings();
+            lv_obj_remove_flag(settings_screen_, LV_OBJ_FLAG_HIDDEN);
+            show_state();
             return true;
         }
-        ScanKey action_key;
+        ScanKey input;
         switch (key) {
-            case LV_KEY_ENTER: action_key = ScanKey::Ok; break;
-            case '5': action_key = ScanKey::Pause; break;
-            case LV_KEY_UP: action_key = ScanKey::Up; break;
-            case LV_KEY_DOWN: action_key = ScanKey::Down; break;
-            case LV_KEY_ESC: action_key = ScanKey::Escape; break;
+            case LV_KEY_ENTER: input = ScanKey::Ok; break;
+            case '5': input = ScanKey::Pause; break;
+            case LV_KEY_LEFT: input = ScanKey::Previous; break;
+            case LV_KEY_RIGHT: input = ScanKey::Next; break;
+            case 'r':
+            case 'R': input = ScanKey::Replay; break;
+            case LV_KEY_UP: input = ScanKey::Up; break;
+            case LV_KEY_DOWN: input = ScanKey::Down; break;
+            case LV_KEY_ESC: input = ScanKey::Escape; break;
             default: return false;
         }
-        const auto previous = session_.state();
-        const auto action = session_.press(action_key);
-        switch (action) {
-            case ScanAction::Quit:
-                running_ = false;
-                break;
-            case ScanAction::Pause:
-                camera_.pause();
-                break;
-            case ScanAction::Resume:
-                if (previous == ScanState::Result) {
-                    std::fprintf(stderr, "Cartoon: OK pressed; starting a new scan.\n");
-                    camera_.start();
-                } else {
-                    camera_.resume();
-                }
-                break;
-            case ScanAction::Retry:
-                camera_.start();
-                break;
-            case ScanAction::ScrollUp:
-                lv_obj_scroll_by(body_, 0, 48, LV_ANIM_OFF);
-                break;
-            case ScanAction::ScrollDown:
-                lv_obj_scroll_by(body_, 0, -48, LV_ANIM_OFF);
-                break;
-            case ScanAction::None:
-                break;
-        }
-        if (session_.state() != previous) {
-            show_state();
-        }
+        execute(session_.press(input));
+        show_state();
         return true;
     }
 
@@ -208,16 +357,32 @@ private:
     }
 
     CameraCapture camera_;
+    AudioPlayer player_;
     ScanSession session_;
+    ScanSettings settings_;
+    ScanSettings draft_;
+    std::string config_path_;
+    std::string config_error_;
+    std::array<std::string, 3> track_text_;
+    std::string status_text_;
     bool running_{true};
+    bool in_settings_{false};
+    size_t setting_index_{0};
     lv_obj_t* root_{nullptr};
     lv_obj_t* title_{nullptr};
+    lv_obj_t* volume_{nullptr};
     lv_obj_t* footer_{nullptr};
+    lv_obj_t* camera_box_{nullptr};
     lv_obj_t* preview_{nullptr};
     lv_obj_t* guide_{nullptr};
     lv_obj_t* hint_{nullptr};
-    lv_obj_t* body_{nullptr};
-    lv_obj_t* result_{nullptr};
+    std::array<lv_obj_t*, 3> tracks_{};
+    lv_obj_t* status_{nullptr};
+    lv_obj_t* elapsed_{nullptr};
+    lv_obj_t* progress_{nullptr};
+    lv_obj_t* settings_screen_{nullptr};
+    lv_obj_t* settings_title_{nullptr};
+    std::array<lv_obj_t*, 4> setting_rows_{};
     lv_image_dsc_t image_{};
     std::vector<uint16_t> pixels_;
 };
@@ -246,7 +411,7 @@ int run() {
         }
     }
     lv_display_delete(display);
-    std::fprintf(stderr, "Cartoon: exited; camera released.\n");
+    std::fprintf(stderr, "Cartoon: exited; camera and audio released.\n");
     return 0;
 }
 

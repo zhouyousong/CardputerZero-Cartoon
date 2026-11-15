@@ -1,5 +1,6 @@
 #include "camera_capture.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
@@ -39,7 +40,7 @@ public:
         while (waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {}
     }
 
-    void launch() {
+    void launch(const ScanSettings& settings) {
         int pipe_fds[2];
         if (pipe2(pipe_fds, O_CLOEXEC) < 0) {
             throw std::runtime_error(std::string("Camera pipe: ") + strerror(errno));
@@ -58,9 +59,13 @@ public:
         if (status == 0) {
             status = posix_spawn_file_actions_addclose(&actions, pipe_fds[1]);
         }
+        const auto width = std::to_string(settings.width);
+        const auto height = std::to_string(settings.height);
+        const auto exposure = std::to_string(settings.exposure);
         const char* arguments[] = {
-            "/usr/bin/rpicam-vid", "--nopreview", "--width", "320", "--height", "240",
+            "/usr/bin/rpicam-vid", "--nopreview", "--width", width.c_str(), "--height", height.c_str(),
             "--framerate", "10", "--codec", "yuv420", "--timeout", "0", "--output", "-",
+            "--ev", exposure.c_str(),
             nullptr
         };
         if (status == 0) {
@@ -82,16 +87,16 @@ public:
 
 } // namespace
 
-std::vector<uint16_t> make_preview(const std::vector<uint8_t>& frame) {
-    if (frame.size() < kCaptureWidth * kCaptureHeight) {
+std::vector<uint16_t> make_preview(const std::vector<uint8_t>& frame, const ScanSettings& settings) {
+    if (!valid_settings(settings) || frame.size() < settings.width * settings.height) {
         throw std::invalid_argument("Preview requires a complete camera luminance frame");
     }
     std::vector<uint16_t> preview(kPreviewWidth * kPreviewHeight);
     for (unsigned y = 0; y < kPreviewHeight; ++y) {
         for (unsigned x = 0; x < kPreviewWidth; ++x) {
-            const auto source_y = (kPreviewHeight - 1 - y) * 2;
-            const auto source_x = (kPreviewWidth - 1 - x) * 2;
-            const uint8_t value = frame[source_y * kCaptureWidth + source_x];
+            const auto source_y = (kPreviewHeight - 1 - y) * settings.height / kPreviewHeight;
+            const auto source_x = (kPreviewWidth - 1 - x) * settings.width / kPreviewWidth;
+            const uint8_t value = frame[source_y * settings.width + source_x];
             preview[y * kPreviewWidth + x] =
                 static_cast<uint16_t>(((value >> 3) << 11) |
                                       ((value >> 2) << 5) | (value >> 3));
@@ -100,12 +105,34 @@ std::vector<uint16_t> make_preview(const std::vector<uint8_t>& frame) {
     return preview;
 }
 
+DecodeResult decode_frame(QrDecoder& decoder, const std::vector<uint8_t>& frame,
+                          const ScanSettings& settings) {
+    if (!valid_settings(settings) || frame.size() < settings.width * settings.height) {
+        throw std::invalid_argument("Decoder requires a complete camera luminance frame");
+    }
+    if (!settings.center_only) {
+        return decoder.decode(frame.data(), settings.width, settings.height);
+    }
+    const auto width = settings.width / 2;
+    const auto height = settings.height / 2;
+    std::vector<uint8_t> cropped(width * height);
+    for (unsigned y = 0; y < height; ++y) {
+        std::copy_n(frame.data() + (y + settings.height / 4) * settings.width + settings.width / 4,
+                    width, cropped.data() + y * width);
+    }
+    return decoder.decode(cropped.data(), width, height);
+}
+
 CameraCapture::~CameraCapture() {
     stop();
 }
 
-void CameraCapture::start() {
+void CameraCapture::start(const ScanSettings& settings) {
     stop();
+    if (!valid_settings(settings)) {
+        throw std::invalid_argument("Invalid scanner settings");
+    }
+    settings_ = settings;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         update_ = {};
@@ -161,13 +188,13 @@ void CameraCapture::run() {
 
 void CameraCapture::capture() {
     CameraProcess process;
-    process.launch();
+    process.launch(settings_);
     QrDecoder decoder;
-    std::vector<uint8_t> frame(kCaptureWidth * kCaptureHeight * 3 / 2);
+    std::vector<uint8_t> frame(settings_.width * settings_.height * 3 / 2);
     size_t received = 0;
     auto last_frame = std::chrono::steady_clock::now();
     bool first_frame = true;
-    unsigned frame_number = 0;
+    auto last_decode = std::chrono::steady_clock::time_point{};
     while (!stopping_) {
         pollfd descriptor{process.fd, POLLIN, 0};
         const int ready = poll(&descriptor, 1, 200);
@@ -200,9 +227,11 @@ void CameraCapture::capture() {
             }
             const auto generation = generation_.load();
             CameraUpdate next;
-            next.preview = make_preview(frame);
-            if (++frame_number % 2 == 0) {
-                next.result = decoder.decode(frame.data(), kCaptureWidth, kCaptureHeight);
+            next.preview = make_preview(frame, settings_);
+            const auto now = std::chrono::steady_clock::now();
+            if (now - last_decode >= std::chrono::milliseconds(1000 / settings_.decode_fps)) {
+                last_decode = now;
+                next.result = decode_frame(decoder, frame, settings_);
             }
             std::lock_guard<std::mutex> lock(mutex_);
             if (!paused_ && generation == generation_) {

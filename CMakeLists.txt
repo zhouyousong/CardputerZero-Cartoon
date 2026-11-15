@@ -6,7 +6,7 @@
 
 cmake_minimum_required(VERSION 3.31)
 
-project(cardputerzero_cartoon VERSION 0.1.2 LANGUAGES C CXX)
+project(cardputerzero_cartoon VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -622,13 +622,17 @@ endif()
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 pkg_check_modules(ZBAR REQUIRED IMPORTED_TARGET zbar)
+pkg_check_modules(CJSON REQUIRED IMPORTED_TARGET libcjson)
 add_library(cartoon_scanner STATIC
     src/scanner/qr_decoder.cpp
     src/scanner/scan_session.cpp
     src/scanner/camera_capture.cpp
+    src/scanner/audio_source.cpp
+    src/scanner/audio_player.cpp
+    src/scanner/scan_settings.cpp
 )
 target_include_directories(cartoon_scanner PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src/scanner")
-target_link_libraries(cartoon_scanner PUBLIC PkgConfig::ZBAR Threads::Threads)
+target_link_libraries(cartoon_scanner PUBLIC PkgConfig::ZBAR PkgConfig::CJSON Threads::Threads)
 target_link_libraries(${PROJECT_NAME}_core PUBLIC cartoon_scanner)
 
 include(CTest)
@@ -637,6 +641,8 @@ if(BUILD_TESTING)
     add_executable(scanner_tests tests/scanner_tests.cpp)
     target_link_libraries(scanner_tests PRIVATE cartoon_scanner PkgConfig::QRENCODE)
     add_test(NAME scanner_contract COMMAND scanner_tests)
+    add_executable(audio_player_tests tests/audio_player_tests.cpp)
+    target_link_libraries(audio_player_tests PRIVATE cartoon_scanner)
 endif()
 
 add_executable(${PROJECT_NAME}

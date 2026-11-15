@@ -1,37 +1,78 @@
 # CardputerZero-Cartoon
 
-An offline camera QR scanner for the 320x170 CardputerZero, based on the
+A camera QR audio player for the 320x170 CardputerZero, based on the
 [CardputerZero LVGL template](https://github.com/CardputerZero/Template).
 
 ## Interaction
 
-- Launch **CardputerZero-Cartoon** from APPLaunch to start the camera.
+- Launch **CardputerZero-Cartoon** into an idle, fixed two-column screen.
+  The left 160x120 camera tile is gray whenever scanning is inactive.
+  The right side always shows up to three recent audio tracks, newest first,
+  the selected track highlighted, playback status, elapsed time and progress.
+- **OK / Enter**: stop audio and start a new scan.
 - A grayscale preview runs at up to 10 fps; QR decoding runs at up to 5 fps.
   The full 320x240 grayscale camera frame is decoded, not just the guide box.
 - The preview is rotated 180 degrees to correct the mounted camera orientation.
   QR decoding still receives the unmodified camera frame.
-- On recognition, scanning stops, the camera is released, and the complete text
-  is displayed. The closest QR code to the image center wins if multiple codes
-  are visible.
-- **OK / Enter**: scan again from a result, or retry a camera error.
-- **5**: pause/resume a live scan. It does not dismiss a result.
-- **Up / Down**: scroll long results or camera errors.
-- **ESC**: exit and release the camera.
+- On a valid audio QR, the camera is released and audio starts automatically.
+  The closest QR code to the scan region center wins when several are visible.
+- **5**: pause/resume scanning or audio; retry the current operation on errors.
+  Pausing scanning releases the camera and discards queued results.
+- **Left / Right**: previous/next track in the visible history, immediately
+  stopping the current operation and playing the chosen track from the start.
+  History does not wrap at the ends.
+- **R**: replay the selected track from the start.
+- **Up / Down**: volume, in steps of 5%, bounded to 0-100%.
+- **S**: scanner settings (see below).
+- **ESC**: exit and release both camera and player.
 
-UTF-8 text, including Chinese and line breaks, is displayed without truncation.
-Non-displayable binary/control data is reported as unsupported. Web links are
-identified but never opened automatically.
+Audio sources must be an absolute Linux file path (for example
+`/home/pi/audio/story.mp3`) or an HTTP/HTTPS direct audio URL. Unicode file names
+and URL query strings are preserved. Relative paths, other schemes, multiline
+QR text and URLs containing embedded credentials are rejected explicitly.
+Ordinary HTML pages are not resolved to audio; there is no browser or shell
+execution of QR content. mpv handles supported audio formats with video disabled.
+
+The three-item history lives only in memory. Duplicate scans move the existing
+source to the top; playback alone never reorders it. A syntactically valid but
+unplayable source stays selected for retry. Playback ends without looping or
+restarting the camera. Unknown duration is shown as `--:--`, not a fake progress.
+
+## Scanner settings
+
+Press **S** for the separate settings page. Entering it pauses scanning/audio;
+returning does not automatically resume either. **Up/Down** selects a row,
+**Left/Right** changes it, **OK** saves and returns, and **ESC** cancels changes.
+New values apply on the next scan:
+
+- Capture resolution: 320x240 (default) or 640x480.
+- QR decode rate: up to 2, 5 (default), or 10 scans per second; camera preview
+  remains up to 10 fps, subject to device performance.
+- Exposure compensation: -2 to +2 EV, default 0 (not optical focus).
+- Decode region: full frame (default) or the central 50% width and height.
+  The guide outlines the actual region; preview orientation remains 180 degrees.
+
+Settings persist atomically in `$XDG_CONFIG_HOME/cardputerzero-cartoon/scanner.conf`
+or `$HOME/.config/cardputerzero-cartoon/scanner.conf`. Missing settings use defaults;
+unreadable or corrupt settings report an error and can be replaced through **S**.
+No autofocus control is exposed because this IMX219 has no usable focus actuator.
 
 ## Privacy
 
-Frames and decoded results stay in device memory. The app does not save images,
-record video, access QR URLs, or upload results. Diagnostic logs contain camera
-errors and result byte counts, never decoded text.
+Frames and history stay in device memory. The app does not save camera images,
+record video, or persist scanned audio addresses. Playing network audio contacts
+the QR URL's server and can follow its redirects; local sources do not require
+network access. No application-level audio download/cache is retained.
+The player runs with user scripts, user configuration and external media
+references disabled. App diagnostic logs report errors/state, not scanned paths
+or query tokens. Only scanner tuning parameters are saved.
 
 ## Hardware and runtime
 
 The initial target is the IMX219 camera on CardputerZero with Debian 13 ARM64.
 Capture uses the device's existing `/usr/bin/rpicam-vid` and libcamera.
+Audio uses `/usr/bin/mpv` with private Unix-socket JSON IPC and the user's
+PulseAudio/PipeWire output. Capture and playback never run simultaneously.
 The screen uses `/dev/fb0`; keys use the template's evdev input routing.
 Run as the normal device user with `video` and `input` group membership,
 preferably through APPLaunch, not as root.
@@ -46,7 +87,8 @@ Pushes to `main` and manual workflow dispatches run the ARM64 Debian 13 build:
 
 1. Install build dependencies.
 2. Configure and compile the app and focused tests.
-3. Run QR decoding and interaction tests.
+3. Run QR, history, settings and scan-region tests, plus real mpv local/HTTP
+   playback, pause/resume, replay and end-of-file tests with a null audio sink.
 4. Package a `.deb` and upload `cardputerzero-cartoon-arm64`.
 
 No local compiler or SDK is needed.
@@ -58,7 +100,7 @@ On Debian 13 ARM64:
 ```sh
 sudo apt-get install build-essential cmake ninja-build pkg-config git \
     libfmt-dev libpng-dev libjpeg-dev libfreetype-dev zlib1g-dev \
-    libzbar-dev libqrencode-dev dpkg-dev
+    libzbar-dev libqrencode-dev libcjson-dev dpkg-dev
 cmake --preset cp0-native -DCM0_SDK_ROOT=/ -DCM0_ALLOW_FETCH_DEPS=OFF
 cmake --build --preset cp0-native-rel --parallel 1
 ctest --test-dir build/cp0-native -C Release --output-on-failure
@@ -77,8 +119,13 @@ Removing it uses `sudo apt remove cardputerzero-cartoon`.
 
 Generated QR fixtures cover exact URL, Unicode and long-text decoding, blank
 frames, unsupported UTF-8/control data, and center selection. Interaction tests
-cover pause, queued-result suppression, OK-only rescan, scrolling, error recovery,
-and exit. An asymmetric four-corner frame checks the 180-degree preview rotation.
+cover idle launch, scan/audio pause, stale-result suppression, autoplay, three-item
+deduplicated history, bounded previous/next, replay, retry, volume and exit.
+Settings tests cover persistence and malformed input; region tests verify
+center-only cropping and both capture resolutions. An asymmetric four-corner
+frame checks the 180-degree preview rotation.
+`audio_player_tests` verifies real mpv playback through the current PulseAudio
+server using a generated four-second tone (5% volume); it needs mpv installed.
 Hardware camera/display tests remain separate from cloud tests.
 
 ## Troubleshooting

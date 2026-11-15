@@ -1,15 +1,19 @@
 #include "camera_capture.h"
 #include "qr_decoder.h"
 #include "scan_session.h"
+#include "scan_settings.h"
 
 #include <qrencode.h>
 
 #include <algorithm>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <unistd.h>
 
 namespace {
 
@@ -84,21 +88,121 @@ void nearest_code_contract() {
 void interaction_contract() {
     using namespace cartoon;
     ScanSession session;
+    require(session.state() == ScanState::Idle, "Launch must not open the camera");
+    require(session.press(ScanKey::Ok) == ScanAction::StartScan, "OK must start scanning");
     session.frame_received();
-    require(session.press(ScanKey::Pause) == ScanAction::Pause, "5 must pause scanning");
+    require(session.press(ScanKey::Pause) == ScanAction::StopScan, "5 must stop the camera when pausing");
     session.decoded({true, true, "stale"});
-    require(session.state() == ScanState::Paused, "Paused scan must ignore queued results");
-    require(session.press(ScanKey::Pause) == ScanAction::Resume, "5 must resume a paused scan");
+    require(session.state() == ScanState::ScanPaused && session.history().empty(),
+            "Paused scan must ignore queued results");
+    require(session.press(ScanKey::Pause) == ScanAction::StartScan, "5 must restart a paused scan");
     session.frame_received();
-    session.decoded({true, true, "first result"});
-    require(session.press(ScanKey::Pause) == ScanAction::None, "5 must not restart a result");
-    require(session.press(ScanKey::Down) == ScanAction::ScrollDown, "Result must support scrolling");
-    require(session.press(ScanKey::Ok) == ScanAction::Resume, "OK must start a new scan");
-    require(session.result().text.empty(), "Rescan must clear the previous result");
-    session.failed("camera unplugged");
-    require(session.press(ScanKey::Ok) == ScanAction::Retry, "OK must retry a failed camera");
+    require(session.decoded({true, true, "/home/pi/audio/first.wav"}) == ScanAction::Play,
+            "Valid audio QR must autoplay");
+    require(session.decoded({true, true, "/stale.wav"}) == ScanAction::None, "One scan must play only once");
+    session.playback({PlaybackState::Playing, 1, 4, {}});
+    require(session.press(ScanKey::Pause) == ScanAction::PauseAudio, "5 must pause audio");
+    require(session.press(ScanKey::Pause) == ScanAction::ResumeAudio, "5 must resume audio");
+    session.playback({PlaybackState::Finished, 4, 4, {}});
+    require(session.state() == ScanState::Finished, "EOF must not loop or rescan");
+    require(session.press(ScanKey::Replay) == ScanAction::Play && session.position() == 0,
+            "Replay must start the selected audio from zero");
+    require(session.press(ScanKey::Ok) == ScanAction::StartScan, "OK must stop audio and rescan");
+    session.playback({PlaybackState::Playing, 2, 4, {}});
+    require(session.state() == ScanState::Starting, "Old playback events must not interrupt a scan");
+    require(session.history().size() == 1, "Rescan must retain the displayed history");
+    session.failed("camera unplugged", true);
+    require(session.press(ScanKey::Pause) == ScanAction::StartScan, "5 must retry a failed camera");
     require(session.error().empty(), "Retry must clear the previous camera error");
     require(session.press(ScanKey::Escape) == ScanAction::Quit, "ESC must exit");
+
+    for (const auto* path : {"/b.wav", "/c.wav", "/d.wav"}) {
+        session.press(ScanKey::Ok);
+        require(session.decoded({true, true, path}) == ScanAction::Play, "Audio must enter history");
+    }
+    require(session.history().size() == 3 && session.history()[0].path == "/d.wav" &&
+            session.history()[2].path == "/b.wav", "History must keep exactly three, newest first");
+    require(session.press(ScanKey::Previous) == ScanAction::None, "History must not wrap at the newest");
+    require(session.press(ScanKey::Next) == ScanAction::Play && session.current()->path == "/c.wav",
+            "Next must select and autoplay the older audio");
+    require(session.history()[0].path == "/d.wav", "Playback must not reorder history");
+    session.press(ScanKey::Next);
+    require(session.press(ScanKey::Next) == ScanAction::None, "History must not wrap at the oldest");
+    session.press(ScanKey::Ok);
+    session.decoded({true, true, "/c.wav"});
+    require(session.history().size() == 3 && session.history()[0].path == "/c.wav",
+            "Duplicate scan must move to front without duplicating entries");
+    session.playback({PlaybackState::Error, 0, 0, "network failed"});
+    require(session.press(ScanKey::Pause) == ScanAction::Play, "5 must retry the current failed audio");
+    session.press(ScanKey::Ok);
+    require(session.decoded({true, true, "not a path"}) == ScanAction::StopScan &&
+            session.history().size() == 3, "Invalid QR must show an error without polluting history");
+    session.press(ScanKey::Ok);
+    require(session.suspend() == ScanAction::StopScan && session.state() == ScanState::ScanPaused,
+            "Settings must suspend the camera");
+    for (int i = 0; i < 30; ++i) session.press(ScanKey::Down);
+    require(session.volume() == 0, "Volume must stop at zero");
+    for (int i = 0; i < 30; ++i) session.press(ScanKey::Up);
+    require(session.volume() == 100, "Volume must stop at 100");
+    require(ScanSession{}.history().empty(), "History must not persist across sessions");
+}
+
+void source_and_settings_contract() {
+    using namespace cartoon;
+    AudioSource source;
+    std::string error;
+    require(parse_audio_source(u8"/home/pi/小熊的故事.wav", source, error) &&
+            source.title == u8"小熊的故事.wav" && !source.network, "Local Unicode audio must be supported");
+    require(parse_audio_source("https://example.com/music.mp3?token=abc", source, error) &&
+            source.path == "https://example.com/music.mp3?token=abc" &&
+            source.title == "music.mp3" && source.network, "Network queries must be preserved, not shown in titles");
+    for (const auto* invalid : {"", "hello", "file:///etc/passwd", "https://", "https:// /x",
+                               "ftp://example.com/audio", "/one\n/two", "https://user:password@host/x"}) {
+        require(!parse_audio_source(invalid, source, error) && !error.empty(),
+                "Invalid/unsupported audio sources must report an error");
+    }
+    require(parse_audio_source("/tmp/$(touch unwanted);song.wav", source, error) &&
+            source.path == "/tmp/$(touch unwanted);song.wav", "Paths must remain data, not shell commands");
+    const auto directory = std::filesystem::temp_directory_path() /
+        ("cartoon-settings-test-" + std::to_string(getpid()));
+    std::filesystem::create_directory(directory);
+    const auto path = (directory / "scanner.conf").string();
+    require(load_settings(path).width == 320, "Absent settings must use initial defaults");
+    ScanSettings settings{640, 480, 2, -2, true};
+    save_settings(path, settings);
+    const auto restored = load_settings(path);
+    require(restored.width == 640 && restored.height == 480 && restored.decode_fps == 2 &&
+            restored.exposure == -2 && restored.center_only, "All scanner parameters must persist");
+    { std::ofstream file(path); file << "640 240 99 8 2"; }
+    bool rejected = false;
+    try { load_settings(path); } catch (const std::runtime_error&) { rejected = true; }
+    require(rejected, "Corrupt settings must report an error, not silently reset");
+    std::filesystem::remove(path);
+    std::filesystem::remove(directory);
+}
+
+void scan_region_contract() {
+    using namespace cartoon;
+    ScanSettings settings{640, 480, 10, 2, false};
+    unsigned side;
+    const auto code = qr("/song.wav", side);
+    std::vector<uint8_t> frame(settings.width * settings.height, 255);
+    for (unsigned y = 0; y < side; ++y) {
+        std::copy_n(code.data() + y * side, side, frame.data() + y * settings.width);
+    }
+    QrDecoder decoder;
+    require(decode_frame(decoder, frame, settings).found, "Full-frame scan must find an off-center code");
+    settings.center_only = true;
+    require(!decode_frame(decoder, frame, settings).found, "Center crop must exclude off-center codes");
+    std::fill(frame.begin(), frame.end(), 255);
+    for (unsigned y = 0; y < side; ++y) {
+        std::copy_n(code.data() + y * side, side,
+            frame.data() + (y + (settings.height - side) / 2) * settings.width + (settings.width - side) / 2);
+    }
+    require(decode_frame(decoder, frame, settings).found, "Center crop must decode a centered code");
+    frame.assign(settings.width * settings.height, 0);
+    frame[0] = 255;
+    require(make_preview(frame, settings).back() == 0xffff, "640x480 must retain 180-degree orientation");
 }
 
 void preview_orientation_contract() {
@@ -123,8 +227,10 @@ int main() {
         decode_contract();
         nearest_code_contract();
         interaction_contract();
+        source_and_settings_contract();
+        scan_region_contract();
         preview_orientation_contract();
-        std::puts("PASS: QR decoding, exact Unicode/long text, center selection, OK rescan, recovery, and 180-degree preview.");
+        std::puts("PASS: QR decoding, 180-degree preview, audio sources, autoplay/controls, three-track history, settings persistence and scan crop.");
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());

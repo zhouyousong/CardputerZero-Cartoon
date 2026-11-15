@@ -1,6 +1,7 @@
 #pragma once
 
 #include "qr_decoder.h"
+#include "scan_settings.h"
 
 #include <atomic>
 #include <cstdint>
@@ -16,7 +17,9 @@ constexpr unsigned kCaptureHeight = 240;
 constexpr unsigned kPreviewWidth = 160;
 constexpr unsigned kPreviewHeight = 120;
 
-std::vector<uint16_t> make_preview(const std::vector<uint8_t>& frame);
+std::vector<uint16_t> make_preview(const std::vector<uint8_t>& frame, const ScanSettings& settings = {});
+DecodeResult decode_frame(QrDecoder& decoder, const std::vector<uint8_t>& frame,
+                          const ScanSettings& settings);
 
 struct CameraUpdate {
     std::vector<uint16_t> preview;
@@ -27,7 +30,7 @@ struct CameraUpdate {
 class CameraCapture {
 public:
     ~CameraCapture();
-    void start();
+    void start(const ScanSettings& settings = {});
     void stop();
     void pause();
     void resume();
@@ -44,6 +47,7 @@ private:
     std::thread worker_;
     std::mutex mutex_;
     CameraUpdate update_;
+    ScanSettings settings_;
 };
 
 } // namespace cartoon
