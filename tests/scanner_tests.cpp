@@ -6,16 +6,26 @@
 #include <qrencode.h>
 
 #include <algorithm>
+#include <atomic>
+#include <cerrno>
+#include <chrono>
+#include <csignal>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <spawn.h>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 #include <unistd.h>
 
 namespace {
+
+std::atomic<unsigned> fixture_launches{0};
+std::atomic<pid_t> fixture_pid{-1};
 
 void require(bool condition, const char* message) {
     if (!condition) {
@@ -43,6 +53,69 @@ std::vector<uint8_t> qr(const std::string& text, unsigned& side) {
         }
     }
     return pixels;
+}
+
+int camera_fixture(unsigned width, unsigned height) {
+    std::vector<uint8_t> frame(width * height * 3 / 2, 128);
+    std::fill_n(frame.begin(), width * height, 255);
+    unsigned side;
+    const auto code = qr("/fixture.wav", side);
+    require(side <= width && side <= height, "Fixture QR exceeds capture dimensions");
+    for (unsigned y = 0; y < side; ++y) {
+        std::copy_n(code.data() + y * side, side,
+            frame.data() + (y + (height - side) / 2) * width + (width - side) / 2);
+    }
+    for (;;) {
+        size_t sent = 0;
+        while (sent < frame.size()) {
+            const auto count = write(STDOUT_FILENO, frame.data() + sent, frame.size() - sent);
+            if (count < 0 && errno == EINTR) continue;
+            require(count > 0, "Camera fixture write failed");
+            sent += static_cast<size_t>(count);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+}
+
+void warm_capture_contract() {
+    using namespace cartoon;
+    CameraCapture camera;
+    const auto wait_for_qr = [&] {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        while (std::chrono::steady_clock::now() < deadline) {
+            auto update = camera.take_update();
+            require(update.error.empty(), "Fixture capture must not report a camera error");
+            if (update.result.found) {
+                require(update.result.text == "/fixture.wav" && !update.preview.empty(),
+                        "A fresh recognized QR must include its preview");
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        throw std::runtime_error("Timed out waiting for fixture QR");
+    };
+    camera.start();
+    wait_for_qr();
+    const auto first_pid = fixture_pid.load();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    require(camera.running() && kill(first_pid, 0) == 0,
+            "Recognizing a QR must retain the camera process");
+    require(!camera.take_update().result.found, "Standby must not repeatedly publish the same QR");
+    camera.pause();
+    camera.start();
+    wait_for_qr();
+    require(fixture_launches == 1 && fixture_pid == first_pid,
+            "An unchanged scan must reuse the warm camera");
+    camera.pause();
+    camera.start({480, 360, 5, 0, false});
+    wait_for_qr();
+    require(fixture_launches == 2 && fixture_pid != first_pid,
+            "Changing capture settings must restart the camera");
+    require(kill(first_pid, 0) < 0 && errno == ESRCH, "Old camera child must be reaped");
+    const auto last_pid = fixture_pid.load();
+    camera.stop();
+    require(!camera.running() && kill(last_pid, 0) < 0 && errno == ESRCH,
+            "Stopping capture must reap the warm child");
 }
 
 void decode_contract() {
@@ -233,15 +306,42 @@ void preview_orientation_contract() {
 
 } // namespace
 
-int main() {
+extern "C" int __real_posix_spawn(pid_t*, const char*, const posix_spawn_file_actions_t*,
+                                  const posix_spawnattr_t*, char* const[], char* const[]);
+
+extern "C" int __wrap_posix_spawn(pid_t* pid, const char* path,
+                                  const posix_spawn_file_actions_t* actions,
+                                  const posix_spawnattr_t* attributes,
+                                  char* const arguments[], char* const environment[]) {
+    if (std::strcmp(path, "/usr/bin/rpicam-vid") != 0) {
+        return __real_posix_spawn(pid, path, actions, attributes, arguments, environment);
+    }
+    const char* fixture_arguments[]{
+        "/proc/self/exe", "--camera-fixture", arguments[3], arguments[5], nullptr
+    };
+    const int status = __real_posix_spawn(pid, fixture_arguments[0], actions, attributes,
+        const_cast<char* const*>(fixture_arguments), environment);
+    if (status == 0) {
+        fixture_pid = *pid;
+        ++fixture_launches;
+    }
+    return status;
+}
+
+int main(int argc, char** argv) {
     try {
+        if (argc == 4 && std::strcmp(argv[1], "--camera-fixture") == 0) {
+            return camera_fixture(static_cast<unsigned>(std::stoul(argv[2])),
+                                  static_cast<unsigned>(std::stoul(argv[3])));
+        }
         decode_contract();
         nearest_code_contract();
         interaction_contract();
         source_and_settings_contract();
         scan_region_contract();
         preview_orientation_contract();
-        std::puts("PASS: QR decoding, 180-degree preview, audio sources, autoplay/controls, three-track history, settings persistence and scan crop.");
+        warm_capture_contract();
+        std::puts("PASS: QR decoding, preview, audio/history controls, settings/crop and warm camera reuse/restart/cleanup.");
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());

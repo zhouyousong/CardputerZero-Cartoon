@@ -141,6 +141,10 @@ frame checks the 180-degree preview rotation.
 `audio_player_tests` verifies real mpv playback through the current PulseAudio
 server using a generated four-second tone (5% volume); it needs mpv installed.
 Hardware camera/display tests remain separate from cloud tests.
+The scanner test executable redirects camera process launches to its own YUV/QR
+fixture, exercising real pipes and child cleanup without requiring cloud hardware.
+It verifies that QR success retains capture, a rescan reuses it, and changed
+settings or exit replace/reap the child.
 
 ## Troubleshooting
 
