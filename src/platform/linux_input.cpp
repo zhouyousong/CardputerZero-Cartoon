@@ -203,6 +203,10 @@ uint32_t map_evdev_key(uint16_t code) {
             return 'z';
         case KEY_C:
             return 'c';
+        case KEY_F:
+            return 'f';
+        case KEY_X:
+            return 'x';
         case KEY_R:
             return 'r';
         case KEY_S:

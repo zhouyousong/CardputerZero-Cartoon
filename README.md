@@ -9,22 +9,33 @@ A camera QR audio player for the 320x170 CardputerZero, based on the
   The left 160x120 camera tile is gray whenever scanning is inactive.
   The right side always shows up to three recent audio tracks, newest first,
   the selected track highlighted, playback status, elapsed time and progress.
-- **OK / Enter**: stop audio and start a new scan.
+- **8 / OK / Enter**: stop audio and start a new scan.
 - A grayscale preview runs at up to 10 fps; QR decoding runs at up to 5 fps.
   The full 320x240 grayscale camera frame is decoded, not just the guide box.
 - The preview is rotated 180 degrees to correct the mounted camera orientation.
   QR decoding still receives the unmodified camera frame.
-- On a valid audio QR, the camera is released and audio starts automatically.
+- On a valid audio QR, decoding pauses and audio starts automatically.
   The closest QR code to the scan region center wins when several are visible.
-- **5**: pause/resume scanning or audio; retry the current operation on errors.
-  Pausing scanning releases the camera and discards queued results.
-- **Left / Right**: previous/next track in the visible history, immediately
+- **6**: pause/resume scanning or audio; retry the current operation on errors.
+  Pausing scanning discards queued results and keeps the camera warm for 30 seconds.
+- **5 / 7** (also **Left / Right**): previous/next track in the visible history, immediately
   stopping the current operation and playing the chosen track from the start.
   History does not wrap at the ends.
 - **R**: replay the selected track from the start.
 - **Up / Down**: volume, in steps of 5%, bounded to 0-100%.
-- **S**: scanner settings (see below).
+- **4** (also **S**): scanner settings (see below).
 - **ESC**: exit and release both camera and player.
+
+The five bottom hints align with the physical 4-8 keys rather than equal-width
+screen columns. Replay, volume and exit hints stay in the header.
+After recognition or scan pause, the camera tile is gray and QR decoding/preview
+conversion stop, but capture continues in memory for up to 30 seconds. Frames
+are drained and discarded to avoid blocking the camera pipe. A scan within that
+window reuses capture when settings are unchanged, discards the in-flight old
+frame, and displays the first fresh preview before decoding it. Switching/replaying
+history does not extend the standby deadline. Timeout or exit releases capture;
+the first scan, a scan after timeout, or changed settings require a cold start.
+Warm standby still occupies the camera and consumes power and memory.
 
 Audio sources must be an absolute Linux file path (for example
 `/home/pi/audio/story.mp3`) or an HTTP/HTTPS direct audio URL. Unicode file names
@@ -40,12 +51,14 @@ restarting the camera. Unknown duration is shown as `--:--`, not a fake progress
 
 ## Scanner settings
 
-Press **S** for the separate settings page. Entering it pauses scanning/audio;
-returning does not automatically resume either. **Up/Down** selects a row,
-**Left/Right** changes it, **OK** saves and returns, and **ESC** cancels changes.
+Press **4** for the separate settings page. Entering it pauses scanning/audio;
+returning does not automatically resume either. **F/X** selects a row,
+**Z/C** changes it, **OK** saves and returns, and **ESC** cancels changes.
+Arrow keys remain equivalent alternatives.
 New values apply on the next scan:
 
-- Capture resolution: 320x240 (default) or 640x480.
+- Capture resolution: 320x240 (default), 480x360, 640x480, 800x600, or 1280x960.
+  Preview remains 160x120; higher capture sizes cost more memory and decoding time.
 - QR decode rate: up to 2, 5 (default), or 10 scans per second; camera preview
   remains up to 10 fps, subject to device performance.
 - Exposure compensation: -2 to +2 EV, default 0 (not optical focus).
@@ -54,7 +67,7 @@ New values apply on the next scan:
 
 Settings persist atomically in `$XDG_CONFIG_HOME/cardputerzero-cartoon/scanner.conf`
 or `$HOME/.config/cardputerzero-cartoon/scanner.conf`. Missing settings use defaults;
-unreadable or corrupt settings report an error and can be replaced through **S**.
+unreadable or corrupt settings report an error and can be replaced through **4**.
 No autofocus control is exposed because this IMX219 has no usable focus actuator.
 
 ## Privacy
@@ -72,7 +85,8 @@ or query tokens. Only scanner tuning parameters are saved.
 The initial target is the IMX219 camera on CardputerZero with Debian 13 ARM64.
 Capture uses the device's existing `/usr/bin/rpicam-vid` and libcamera.
 Audio uses `/usr/bin/mpv` with private Unix-socket JSON IPC and the user's
-PulseAudio/PipeWire output. Capture and playback never run simultaneously.
+PulseAudio/PipeWire output. Active QR decoding and playback do not run
+simultaneously; warm camera capture can coexist with playback for 30 seconds.
 The screen uses `/dev/fb0`; keys use the template's evdev input routing.
 Run as the normal device user with `video` and `input` group membership,
 preferably through APPLaunch, not as root.
@@ -122,7 +136,7 @@ frames, unsupported UTF-8/control data, and center selection. Interaction tests
 cover idle launch, scan/audio pause, stale-result suppression, autoplay, three-item
 deduplicated history, bounded previous/next, replay, retry, volume and exit.
 Settings tests cover persistence and malformed input; region tests verify
-center-only cropping and both capture resolutions. An asymmetric four-corner
+center-only cropping and fixed preview scaling for the capture resolutions. An asymmetric four-corner
 frame checks the 180-degree preview rotation.
 `audio_player_tests` verifies real mpv playback through the current PulseAudio
 server using a generated four-second tone (5% volume); it needs mpv installed.

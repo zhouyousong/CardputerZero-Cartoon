@@ -34,6 +34,7 @@ public:
     void stop();
     void pause();
     void resume();
+    bool running() const { return running_; }
     CameraUpdate take_update();
 
 private:
@@ -42,6 +43,7 @@ private:
     void report_error(const std::string& error);
 
     std::atomic<bool> stopping_{false};
+    std::atomic<bool> running_{false};
     std::atomic<bool> paused_{false};
     std::atomic<uint64_t> generation_{0};
     std::thread worker_;

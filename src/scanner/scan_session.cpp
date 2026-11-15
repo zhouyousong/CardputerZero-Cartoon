@@ -22,7 +22,7 @@ ScanAction ScanSession::play_selected() {
 ScanAction ScanSession::suspend() {
     if (state_ == ScanState::Starting || state_ == ScanState::Scanning) {
         state_ = ScanState::ScanPaused;
-        return ScanAction::StopScan;
+        return ScanAction::PauseScan;
     }
     if (state_ == ScanState::Playing) {
         state_ = ScanState::AudioPaused;
@@ -63,7 +63,7 @@ ScanAction ScanSession::press(ScanKey key) {
     if (key == ScanKey::Pause) {
         if (state_ == ScanState::Scanning || state_ == ScanState::Starting) {
             state_ = ScanState::ScanPaused;
-            return ScanAction::StopScan;
+            return ScanAction::PauseScan;
         }
         if (state_ == ScanState::ScanPaused || (state_ == ScanState::Error && camera_error_)) {
             error_.clear();

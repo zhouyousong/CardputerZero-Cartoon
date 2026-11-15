@@ -1,8 +1,11 @@
 #pragma once
 
+#include <array>
 #include <string>
 
 namespace cartoon {
+
+inline constexpr std::array<unsigned, 5> kCaptureWidths{320, 480, 640, 800, 1280};
 
 struct ScanSettings {
     unsigned width{320};

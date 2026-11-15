@@ -12,8 +12,10 @@
 
 #include <array>
 #include <algorithm>
+#include <chrono>
 #include <csignal>
 #include <cstdio>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -45,7 +47,9 @@ public:
         auto* small = assets.load_standard_font(10, app::StandardFontWeight::Regular);
         lv_obj_set_style_text_font(root_, font ? font : &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(root_, lv_color_hex(0xf0f4f8), 0);
-        title_ = label(root_, 4, 1, 215, u8"Cartoon · 扫码听音频");
+        title_ = label(root_, 4, 1, 70, "Cartoon");
+        auto* shortcuts = label(root_, 75, 2, 163, u8"R 重播  ↑↓ 音量  ESC 退出");
+        lv_obj_set_style_text_font(shortcuts, small ? small : &lv_font_montserrat_12, 0);
         volume_ = label(root_, 240, 1, 77, "");
 
         camera_box_ = lv_obj_create(root_);
@@ -62,7 +66,7 @@ public:
         lv_obj_set_style_border_width(guide_, 1, 0);
         lv_obj_set_style_border_color(guide_, lv_color_hex(0x45d6b3), 0);
         lv_obj_remove_flag(guide_, LV_OBJ_FLAG_SCROLLABLE);
-        hint_ = label(camera_box_, 4, 42, 152, u8"未扫描\n按 OK 开始");
+        hint_ = label(camera_box_, 4, 42, 152, u8"未扫描\n8/OK 扫码");
         lv_obj_set_style_text_align(hint_, LV_TEXT_ALIGN_CENTER, 0);
         label(root_, 166, 22, 150, u8"最近音频");
         for (size_t i = 0; i < tracks_.size(); ++i) {
@@ -78,10 +82,17 @@ public:
         lv_obj_set_size(progress_, 150, 3);
         lv_bar_set_range(progress_, 0, 1000);
         lv_obj_set_style_bg_color(progress_, lv_color_hex(0x45d6b3), LV_PART_INDICATOR);
-        footer_ = label(root_, 4, 142, 312, "");
-        lv_obj_set_style_text_font(footer_, small ? small : &lv_font_montserrat_12, 0);
-        lv_obj_set_height(footer_, 28);
-        lv_obj_set_style_text_line_space(footer_, -1, 0);
+        constexpr std::array<int, 5> centers{54, 109, 162, 213, 266};
+        constexpr std::array<const char*, 5> actions{
+            u8"4\n设置", u8"5\n上一曲", u8"6\n暂停/继续", u8"7\n下一曲", u8"8/OK\n扫码"
+        };
+        for (size_t i = 0; i < centers.size(); ++i) {
+            auto* button_hint = label(root_, centers[i] - 26, 143, 52, actions[i]);
+            lv_obj_set_style_text_font(button_hint, small ? small : &lv_font_montserrat_12, 0);
+            lv_obj_set_style_text_align(button_hint, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_height(button_hint, 27);
+            lv_obj_set_style_text_line_space(button_hint, -1, 0);
+        }
 
         settings_screen_ = lv_obj_create(root_);
         lv_obj_remove_style_all(settings_screen_);
@@ -95,7 +106,7 @@ public:
             setting_rows_[i] = label(settings_screen_, 8, 30 + static_cast<int>(i) * 26, 304, "");
         }
         auto* settings_footer = label(settings_screen_, 5, 145, 310,
-            u8"↑↓ 选择  ←→ 调值  OK 保存  ESC 取消");
+            u8"F/X 选择  Z/C 调值  OK 保存  ESC 取消");
         lv_obj_set_style_text_font(settings_footer, small ? small : &lv_font_montserrat_12, 0);
         lv_obj_add_flag(settings_screen_, LV_OBJ_FLAG_HIDDEN);
 
@@ -128,12 +139,23 @@ public:
     bool running() const { return running_; }
 
     void update() {
+        if (warm_until_ && std::chrono::steady_clock::now() >= *warm_until_) {
+            camera_.stop();
+            warm_until_.reset();
+            std::fprintf(stderr, "Cartoon camera: 30-second standby expired; camera released.\n");
+            show_state();
+        }
         auto next = camera_.take_update();
         const auto state = session_.state();
         const bool scanning = state == ScanState::Starting || state == ScanState::Scanning;
         if (scanning && !next.error.empty()) {
             camera_.stop();
+            warm_until_.reset();
             fail(std::move(next.error), true);
+        } else if (!scanning && !next.error.empty()) {
+            camera_.stop();
+            warm_until_.reset();
+            show_state();
         } else if (scanning && !next.preview.empty()) {
             lv_image_cache_drop(&image_);
             pixels_ = std::move(next.preview);
@@ -172,6 +194,15 @@ private:
         session_.failed(std::move(error), camera_error);
     }
 
+    void standby() {
+        if (!camera_.running()) return;
+        camera_.pause();
+        if (!warm_until_) {
+            warm_until_ = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+            std::fprintf(stderr, "Cartoon camera: warm standby started (30 seconds).\n");
+        }
+    }
+
     void execute(ScanAction action) {
         try {
             switch (action) {
@@ -182,12 +213,17 @@ private:
                         break;
                     }
                     camera_.start(settings_);
+                    warm_until_.reset();
+                    break;
+                case ScanAction::PauseScan:
+                    standby();
                     break;
                 case ScanAction::StopScan:
                     camera_.stop();
+                    warm_until_.reset();
                     break;
                 case ScanAction::Play:
-                    camera_.stop();
+                    standby();
                     player_.play(session_.current()->path, session_.volume());
                     break;
                 case ScanAction::PauseAudio: player_.set_paused(true); break;
@@ -197,6 +233,7 @@ private:
                 case ScanAction::None: break;
             }
         } catch (const std::exception& error) {
+            if (action == ScanAction::StartScan) warm_until_.reset();
             fail(error.what(), action == ScanAction::StartScan);
         }
     }
@@ -222,7 +259,8 @@ private:
             lv_obj_add_flag(guide_, LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(hint_, LV_OBJ_FLAG_HIDDEN);
             lv_label_set_text(hint_, state == ScanState::ScanPaused ?
-                u8"扫码已暂停\n5 继续" : u8"未扫描\nOK 扫码");
+                u8"扫码已暂停\n6 继续" :
+                (warm_until_ ? u8"摄像头待机\n8/OK 扫码" : u8"未扫描\n8/OK 扫码"));
         }
         for (size_t i = 0; i < tracks_.size(); ++i) {
             const bool selected = i < session_.history().size() && i == session_.selected();
@@ -258,9 +296,6 @@ private:
         lv_bar_set_value(progress_, session_.duration() > 0 ?
             static_cast<int>(std::clamp(session_.position() / session_.duration(), 0.0, 1.0) * 1000) : 0,
             LV_ANIM_OFF);
-        lv_label_set_text(footer_, state == ScanState::Error ?
-            u8"5 重试  OK 扫码  S 设置  ESC 退出\n← 上一曲  → 下一曲  ↑↓ 音量" :
-            u8"OK 扫码  5 暂停/继续  R 重播  S 设置\n← 上一曲  → 下一曲  ↑↓ 音量  ESC 退出");
     }
 
     void show_settings() {
@@ -278,6 +313,13 @@ private:
     }
 
     bool settings_key(uint32_t key) {
+        switch (key) {
+            case 'f': case 'F': key = LV_KEY_UP; break;
+            case 'x': case 'X': key = LV_KEY_DOWN; break;
+            case 'z': case 'Z': key = LV_KEY_LEFT; break;
+            case 'c': case 'C': key = LV_KEY_RIGHT; break;
+            default: break;
+        }
         if (key == LV_KEY_ESC) {
             in_settings_ = false;
             lv_obj_add_flag(settings_screen_, LV_OBJ_FLAG_HIDDEN);
@@ -303,7 +345,10 @@ private:
         } else if (key == LV_KEY_LEFT || key == LV_KEY_RIGHT) {
             const int step = key == LV_KEY_RIGHT ? 1 : -1;
             if (setting_index_ == 0) {
-                draft_.width = draft_.width == 320 ? 640 : 320;
+                const auto index = std::find(kCaptureWidths.begin(), kCaptureWidths.end(), draft_.width) -
+                    kCaptureWidths.begin();
+                draft_.width = kCaptureWidths[static_cast<size_t>(std::clamp(
+                    static_cast<int>(index) + step, 0, static_cast<int>(kCaptureWidths.size()) - 1))];
                 draft_.height = draft_.width * 3 / 4;
             } else if (setting_index_ == 1) {
                 constexpr std::array<unsigned, 3> rates{2, 5, 10};
@@ -323,7 +368,7 @@ private:
     bool key(uint32_t key, bool held) {
         if (held) return true;
         if (in_settings_) return settings_key(key);
-        if (key == 's' || key == 'S') {
+        if (key == '4' || key == 's' || key == 'S') {
             execute(session_.suspend());
             if (session_.state() == ScanState::Loading) player_.set_paused(true);
             draft_ = settings_;
@@ -337,10 +382,10 @@ private:
         }
         ScanKey input;
         switch (key) {
-            case LV_KEY_ENTER: input = ScanKey::Ok; break;
-            case '5': input = ScanKey::Pause; break;
-            case LV_KEY_LEFT: input = ScanKey::Previous; break;
-            case LV_KEY_RIGHT: input = ScanKey::Next; break;
+            case '8': case LV_KEY_ENTER: input = ScanKey::Ok; break;
+            case '6': input = ScanKey::Pause; break;
+            case '5': case LV_KEY_LEFT: input = ScanKey::Previous; break;
+            case '7': case LV_KEY_RIGHT: input = ScanKey::Next; break;
             case 'r':
             case 'R': input = ScanKey::Replay; break;
             case LV_KEY_UP: input = ScanKey::Up; break;
@@ -364,6 +409,7 @@ private:
     ScanSettings draft_;
     std::string config_path_;
     std::string config_error_;
+    std::optional<std::chrono::steady_clock::time_point> warm_until_;
     std::array<std::string, 3> track_text_;
     std::string status_text_;
     bool running_{true};
@@ -372,7 +418,6 @@ private:
     lv_obj_t* root_{nullptr};
     lv_obj_t* title_{nullptr};
     lv_obj_t* volume_{nullptr};
-    lv_obj_t* footer_{nullptr};
     lv_obj_t* camera_box_{nullptr};
     lv_obj_t* preview_{nullptr};
     lv_obj_t* guide_{nullptr};

@@ -91,18 +91,18 @@ void interaction_contract() {
     require(session.state() == ScanState::Idle, "Launch must not open the camera");
     require(session.press(ScanKey::Ok) == ScanAction::StartScan, "OK must start scanning");
     session.frame_received();
-    require(session.press(ScanKey::Pause) == ScanAction::StopScan, "5 must stop the camera when pausing");
+    require(session.press(ScanKey::Pause) == ScanAction::PauseScan, "6 must suspend decoding when pausing");
     session.decoded({true, true, "stale"});
     require(session.state() == ScanState::ScanPaused && session.history().empty(),
             "Paused scan must ignore queued results");
-    require(session.press(ScanKey::Pause) == ScanAction::StartScan, "5 must restart a paused scan");
+    require(session.press(ScanKey::Pause) == ScanAction::StartScan, "6 must resume a paused scan");
     session.frame_received();
     require(session.decoded({true, true, "/home/pi/audio/first.wav"}) == ScanAction::Play,
             "Valid audio QR must autoplay");
     require(session.decoded({true, true, "/stale.wav"}) == ScanAction::None, "One scan must play only once");
     session.playback({PlaybackState::Playing, 1, 4, {}});
-    require(session.press(ScanKey::Pause) == ScanAction::PauseAudio, "5 must pause audio");
-    require(session.press(ScanKey::Pause) == ScanAction::ResumeAudio, "5 must resume audio");
+    require(session.press(ScanKey::Pause) == ScanAction::PauseAudio, "6 must pause audio");
+    require(session.press(ScanKey::Pause) == ScanAction::ResumeAudio, "6 must resume audio");
     session.playback({PlaybackState::Finished, 4, 4, {}});
     require(session.state() == ScanState::Finished, "EOF must not loop or rescan");
     require(session.press(ScanKey::Replay) == ScanAction::Play && session.position() == 0,
@@ -112,7 +112,7 @@ void interaction_contract() {
     require(session.state() == ScanState::Starting, "Old playback events must not interrupt a scan");
     require(session.history().size() == 1, "Rescan must retain the displayed history");
     session.failed("camera unplugged", true);
-    require(session.press(ScanKey::Pause) == ScanAction::StartScan, "5 must retry a failed camera");
+    require(session.press(ScanKey::Pause) == ScanAction::StartScan, "6 must retry a failed camera");
     require(session.error().empty(), "Retry must clear the previous camera error");
     require(session.press(ScanKey::Escape) == ScanAction::Quit, "ESC must exit");
 
@@ -133,13 +133,13 @@ void interaction_contract() {
     require(session.history().size() == 3 && session.history()[0].path == "/c.wav",
             "Duplicate scan must move to front without duplicating entries");
     session.playback({PlaybackState::Error, 0, 0, "network failed"});
-    require(session.press(ScanKey::Pause) == ScanAction::Play, "5 must retry the current failed audio");
+    require(session.press(ScanKey::Pause) == ScanAction::Play, "6 must retry the current failed audio");
     session.press(ScanKey::Ok);
     require(session.decoded({true, true, "not a path"}) == ScanAction::StopScan &&
             session.history().size() == 3, "Invalid QR must show an error without polluting history");
     session.press(ScanKey::Ok);
-    require(session.suspend() == ScanAction::StopScan && session.state() == ScanState::ScanPaused,
-            "Settings must suspend the camera");
+    require(session.suspend() == ScanAction::PauseScan && session.state() == ScanState::ScanPaused,
+            "Settings must suspend decoding without forcing camera release");
     for (int i = 0; i < 30; ++i) session.press(ScanKey::Down);
     require(session.volume() == 0, "Volume must stop at zero");
     for (int i = 0; i < 30; ++i) session.press(ScanKey::Up);
@@ -173,6 +173,17 @@ void source_and_settings_contract() {
     const auto restored = load_settings(path);
     require(restored.width == 640 && restored.height == 480 && restored.decode_fps == 2 &&
             restored.exposure == -2 && restored.center_only, "All scanner parameters must persist");
+    for (const unsigned width : {480, 800, 1280}) {
+        settings.width = width;
+        settings.height = width * 3 / 4;
+        save_settings(path, settings);
+        require(load_settings(path).width == width, "New capture resolutions must persist");
+        std::vector<uint8_t> frame(width * settings.height, 0);
+        frame[0] = 255;
+        const auto preview = make_preview(frame, settings);
+        require(preview.size() == kPreviewWidth * kPreviewHeight && preview.back() == 0xffff,
+                "New resolutions must retain fixed preview size and orientation");
+    }
     { std::ofstream file(path); file << "640 240 99 8 2"; }
     bool rejected = false;
     try { load_settings(path); } catch (const std::runtime_error&) { rejected = true; }

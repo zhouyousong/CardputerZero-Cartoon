@@ -10,7 +10,7 @@ namespace cartoon {
 
 enum class ScanState { Idle, Starting, Scanning, ScanPaused, Loading, Playing, AudioPaused, Finished, Error };
 enum class ScanKey { Ok, Pause, Previous, Next, Replay, Up, Down, Escape };
-enum class ScanAction { None, StartScan, StopScan, Play, PauseAudio, ResumeAudio, Volume, Quit };
+enum class ScanAction { None, StartScan, PauseScan, StopScan, Play, PauseAudio, ResumeAudio, Volume, Quit };
 
 class ScanSession {
 public:

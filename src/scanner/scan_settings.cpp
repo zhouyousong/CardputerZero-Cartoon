@@ -1,5 +1,6 @@
 #include "scan_settings.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdlib>
 #include <cstdio>
@@ -12,8 +13,8 @@
 namespace cartoon {
 
 bool valid_settings(const ScanSettings& settings) {
-    return ((settings.width == 320 && settings.height == 240) ||
-            (settings.width == 640 && settings.height == 480)) &&
+    return std::find(kCaptureWidths.begin(), kCaptureWidths.end(), settings.width) != kCaptureWidths.end() &&
+        settings.height == settings.width * 3 / 4 &&
         (settings.decode_fps == 2 || settings.decode_fps == 5 || settings.decode_fps == 10) &&
         settings.exposure >= -2 && settings.exposure <= 2;
 }
@@ -36,14 +37,14 @@ ScanSettings load_settings(const std::string& path) {
     }
     std::ifstream input(path);
     if (!input) {
-        throw std::runtime_error(u8"无法读取扫码设置；按 S 检查");
+        throw std::runtime_error(u8"无法读取扫码设置；按 4 检查");
     }
     ScanSettings settings;
     unsigned center;
     std::string trailing;
     if (!(input >> settings.width >> settings.height >> settings.decode_fps >> settings.exposure >> center) ||
         center > 1 || (input >> trailing) || input.bad() || !valid_settings(settings)) {
-        throw std::runtime_error(u8"扫码设置损坏；按 S 重新保存");
+        throw std::runtime_error(u8"扫码设置损坏；按 4 重新保存");
     }
     settings.center_only = center == 1;
     return settings;
