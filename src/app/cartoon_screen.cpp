@@ -101,9 +101,13 @@ public:
         settings_title_ = label(settings_screen_, 6, 2, 308, u8"扫码设置");
         lv_label_set_long_mode(settings_title_, LV_LABEL_LONG_SCROLL_CIRCULAR);
         for (size_t i = 0; i < setting_rows_.size(); ++i) {
-            setting_rows_[i] = label(settings_screen_, 8, 27 + static_cast<int>(i) * 22, 304, "");
+            setting_rows_[i] = label(settings_screen_, 8, 21 + static_cast<int>(i) * 18, 304, "");
+            lv_label_set_long_mode(setting_rows_[i], LV_LABEL_LONG_SCROLL_CIRCULAR);
         }
-        auto* settings_footer = label(settings_screen_, 5, 145, 310,
+        settings_file_ = label(settings_screen_, 5, 132, 310, "");
+        lv_label_set_long_mode(settings_file_, LV_LABEL_LONG_SCROLL_CIRCULAR);
+        lv_obj_set_style_text_font(settings_file_, small ? small : &lv_font_montserrat_12, 0);
+        auto* settings_footer = label(settings_screen_, 5, 151, 310,
             u8"↑↓ 选择  ←→ 调值  OK 保存  ESC 取消");
         lv_obj_set_style_text_font(settings_footer, small ? small : &lv_font_montserrat_12, 0);
         lv_obj_add_flag(settings_screen_, LV_OBJ_FLAG_HIDDEN);
@@ -157,7 +161,7 @@ public:
                 std::fprintf(stderr, "Cartoon: camera preview active.\n");
             }
             if (next.result.found) {
-                execute(session_.decoded(next.result));
+                execute(session_.decoded(next.result, settings_.base_address));
                 if (session_.state() == ScanState::Error) {
                     std::fprintf(stderr, "Cartoon: %s\n", session_.error().c_str());
                 }
@@ -282,18 +286,21 @@ private:
     }
 
     void show_settings() {
-        const std::array<std::string, 5> values = {
+        const std::array<std::string, 6> values = {
             u8"采集分辨率: " + std::to_string(draft_.width) + " x " + std::to_string(draft_.height),
             u8"扫码频率: " + std::to_string(draft_.decode_fps) + u8" 次/秒",
             u8"曝光补偿: " + std::to_string(draft_.exposure) + " EV",
             std::string(u8"扫码区域: ") + (draft_.center_only ? u8"中心 50%" : u8"全画面"),
-            std::string(u8"二维码算法: ") + (draft_.algorithm == QrAlgorithm::ZBar ? "ZBar" : "ZXing-C++")
+            std::string(u8"二维码算法: ") + (draft_.algorithm == QrAlgorithm::ZBar ? "ZBar" : "ZXing-C++"),
+            std::string(u8"音频基地址: ") + (draft_.base_address.empty() ? u8"未设置（编辑配置文件）" : draft_.base_address)
         };
         for (size_t i = 0; i < values.size(); ++i) {
             lv_label_set_text(setting_rows_[i], values[i].c_str());
             lv_obj_set_style_text_color(setting_rows_[i],
                 lv_color_hex(i == setting_index_ ? 0x45d6b3 : 0xf0f4f8), 0);
         }
+        const auto file_hint = std::string(u8"Linux 编辑: ") + config_path_ + u8"  第二行 base_address=；重新进入设置加载";
+        lv_label_set_text(settings_file_, file_hint.c_str());
     }
 
     bool settings_key(uint32_t key) {
@@ -342,7 +349,7 @@ private:
                 draft_.exposure = std::clamp(draft_.exposure + step, -2, 2);
             } else if (setting_index_ == 3) {
                 draft_.center_only = !draft_.center_only;
-            } else {
+            } else if (setting_index_ == 4) {
                 draft_.algorithm = draft_.algorithm == QrAlgorithm::ZBar ? QrAlgorithm::ZXing : QrAlgorithm::ZBar;
             }
         }
@@ -357,10 +364,19 @@ private:
         if (key == '4' || key == 's' || key == 'S') {
             execute(session_.suspend());
             if (session_.state() == ScanState::Loading) player_.set_paused(true);
+            try {
+                if (config_path_.empty()) config_path_ = settings_path();
+                settings_ = load_settings(config_path_);
+                config_error_.clear();
+            } catch (const std::exception& error) {
+                config_error_ = error.what();
+                std::fprintf(stderr, "Cartoon settings: %s\n", error.what());
+            }
             draft_ = settings_;
             setting_index_ = 0;
             in_settings_ = true;
-            lv_label_set_text(settings_title_, u8"扫码设置（保存后下次扫码生效）");
+            lv_label_set_text(settings_title_, config_error_.empty() ?
+                u8"扫码设置（基地址请在 Linux 编辑）" : config_error_.c_str());
             show_settings();
             lv_obj_remove_flag(settings_screen_, LV_OBJ_FLAG_HIDDEN);
             show_state();
@@ -410,7 +426,8 @@ private:
     lv_obj_t* progress_{nullptr};
     lv_obj_t* settings_screen_{nullptr};
     lv_obj_t* settings_title_{nullptr};
-    std::array<lv_obj_t*, 5> setting_rows_{};
+    std::array<lv_obj_t*, 6> setting_rows_{};
+    lv_obj_t* settings_file_{nullptr};
     std::array<lv_obj_t*, 5> button_hints_{};
     lv_image_dsc_t image_{};
     std::vector<uint16_t> pixels_;

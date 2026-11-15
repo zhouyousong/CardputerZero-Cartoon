@@ -1,4 +1,5 @@
 #include "scan_settings.h"
+#include "audio_source.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -17,7 +18,8 @@ bool valid_settings(const ScanSettings& settings) {
         settings.height == settings.width * 3 / 4 &&
         (settings.decode_fps == 2 || settings.decode_fps == 5 || settings.decode_fps == 10) &&
         settings.exposure >= -2 && settings.exposure <= 2 &&
-        (settings.algorithm == QrAlgorithm::ZBar || settings.algorithm == QrAlgorithm::ZXing);
+        (settings.algorithm == QrAlgorithm::ZBar || settings.algorithm == QrAlgorithm::ZXing) &&
+        valid_audio_base(settings.base_address);
 }
 
 std::string settings_path() {
@@ -41,21 +43,34 @@ ScanSettings load_settings(const std::string& path) {
         throw std::runtime_error(u8"无法读取扫码设置；按 4 检查");
     }
     ScanSettings settings;
+    std::string line;
+    std::getline(input, line);
+    std::istringstream parameters(line);
     unsigned center;
     unsigned algorithm = 0;
     std::string trailing;
-    if (!(input >> settings.width >> settings.height >> settings.decode_fps >> settings.exposure >> center) ||
+    if (!(parameters >> settings.width >> settings.height >> settings.decode_fps >> settings.exposure >> center) ||
         center > 1 || input.bad()) {
         throw std::runtime_error(u8"扫码设置损坏；按 4 重新保存");
     }
-    input >> std::ws;
+    parameters >> std::ws;
     // Older five-field settings deliberately retain the existing ZBar default.
-    if (input.peek() != std::char_traits<char>::eof() &&
-        (!(input >> algorithm) || algorithm > 1 || (input >> trailing))) {
+    if (parameters.peek() != std::char_traits<char>::eof() &&
+        (!(parameters >> algorithm) || algorithm > 1 || (parameters >> trailing))) {
         throw std::runtime_error(u8"扫码设置损坏；按 4 重新保存");
     }
     settings.center_only = center == 1;
     settings.algorithm = static_cast<QrAlgorithm>(algorithm);
+    bool base_seen = false;
+    while (std::getline(input, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty()) continue;
+        if (base_seen || line.rfind("base_address=", 0) != 0) {
+            throw std::runtime_error(u8"扫码设置损坏；请检查 base_address 配置");
+        }
+        settings.base_address = line.substr(13);
+        base_seen = true;
+    }
     if (input.bad() || !valid_settings(settings)) {
         throw std::runtime_error(u8"扫码设置损坏；按 4 重新保存");
     }
@@ -75,7 +90,8 @@ void save_settings(const std::string& path, const ScanSettings& settings) {
     std::ostringstream contents;
     contents << settings.width << ' ' << settings.height << ' ' << settings.decode_fps << ' '
              << settings.exposure << ' ' << settings.center_only << ' '
-             << static_cast<unsigned>(settings.algorithm) << '\n';
+             << static_cast<unsigned>(settings.algorithm) << '\n'
+             << "base_address=" << settings.base_address << '\n';
     const auto text = contents.str();
     size_t offset = 0;
     bool success = true;

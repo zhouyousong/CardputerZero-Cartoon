@@ -261,22 +261,69 @@ void source_and_settings_contract() {
     }
     require(parse_audio_source("/tmp/$(touch unwanted);song.wav", source, error) &&
             source.path == "/tmp/$(touch unwanted);song.wav", "Paths must remain data, not shell commands");
+    for (const char* base : {"https://example.com/audio", "https://example.com/audio/"}) {
+        require(parse_audio_source("stories/../a.mp3?token=x%2Fy", source, error, base) &&
+                source.path == "https://example.com/audio/a.mp3?token=x%2Fy" && source.title == "a.mp3",
+                "HTTP bases are directories; normalize dot segments without altering query tokens");
+    }
+    require(parse_audio_source("../a.mp3", source, error, "https://example.com/audio/") &&
+            source.path == "https://example.com/a.mp3", "Parent paths must resolve against the base directory");
+    require(parse_audio_source("./a.mp3", source, error, "https://example.com") &&
+            source.path == "https://example.com/a.mp3", "Host-only bases must use the root directory");
+    require(parse_audio_source(u8"stories/../小熊.wav", source, error, "/home/pi/audio") &&
+            source.path == u8"/home/pi/audio/小熊.wav" && !source.network,
+            "Local relative paths must normalize and retain Unicode");
+    require(parse_audio_source("/absolute.wav", source, error, "https://example.com/audio") &&
+            source.path == "/absolute.wav" && !source.network,
+            "Leading slash always means a local absolute path, even with a network base");
+    require(parse_audio_source("https://other.example/a.mp3", source, error, "/home/pi/audio") &&
+            source.path == "https://other.example/a.mp3", "Absolute URLs must bypass the base");
+    for (const char* value : {"ftp://host/song", "file:///tmp/song", "C:\\song.mp3"}) {
+        require(!parse_audio_source(value, source, error, "/home/pi/audio"),
+                "Unsupported schemes must not become local relative paths");
+    }
+    for (const char* base : {"relative", "https://user:pass@host/audio", "https://host/audio?x=1",
+                              "/home/pi/\naudio", " /home/pi/audio"}) {
+        require(!valid_audio_base(base) && !parse_audio_source("a.mp3", source, error, base),
+                "Malformed bases must report an error");
+    }
+    ScanSession relative_session;
+    relative_session.press(ScanKey::Ok);
+    require(relative_session.decoded({true, true, "./a.mp3"}, "/home/pi/audio") == ScanAction::Play &&
+            relative_session.current()->path == "/home/pi/audio/a.mp3",
+            "Resolved absolute source must be used for playback and history");
+    relative_session.press(ScanKey::Ok);
+    relative_session.decoded({true, true, "/home/pi/audio/a.mp3"}, "/other");
+    require(relative_session.history().size() == 1, "Relative and absolute scans must deduplicate by resolved path");
+    relative_session.press(ScanKey::Ok);
+    relative_session.decoded({true, true, "b.mp3"}, "/new-base");
+    require(relative_session.history()[1].path == "/home/pi/audio/a.mp3",
+            "Changing a base must not retarget existing history");
     const auto directory = std::filesystem::temp_directory_path() /
         ("cartoon-settings-test-" + std::to_string(getpid()));
     std::filesystem::create_directory(directory);
     const auto path = (directory / "scanner.conf").string();
     require(load_settings(path).width == 320, "Absent settings must use initial defaults");
     ScanSettings settings{640, 480, 2, -2, true, QrAlgorithm::ZXing};
+    settings.base_address = "https://example.com/audio/";
     save_settings(path, settings);
     const auto restored = load_settings(path);
     require(restored.width == 640 && restored.height == 480 && restored.decode_fps == 2 &&
-            restored.exposure == -2 && restored.center_only && restored.algorithm == QrAlgorithm::ZXing,
+            restored.exposure == -2 && restored.center_only && restored.algorithm == QrAlgorithm::ZXing &&
+            restored.base_address == settings.base_address,
             "All scanner parameters including decoder selection must persist");
     { std::ofstream file(path); file << "640 480 2 -2 1\n"; }
     const auto legacy = load_settings(path);
     require(legacy.algorithm == QrAlgorithm::ZBar && legacy.width == 640 &&
             legacy.decode_fps == 2 && legacy.center_only,
             "Existing five-field settings must load unchanged with the ZBar default");
+    { std::ofstream file(path); file << "640 480 2 -2 1 1\n"; }
+    require(load_settings(path).algorithm == QrAlgorithm::ZXing && load_settings(path).base_address.empty(),
+            "Existing six-field settings must preserve the engine with an empty base");
+    settings.base_address = u8"/home/pi/音频目录";
+    save_settings(path, settings);
+    require(load_settings(path).base_address == settings.base_address,
+            "Local Unicode base directories must survive saving scanner parameters");
     for (const unsigned width : {480, 800, 1280}) {
         settings.width = width;
         settings.height = width * 3 / 4;
@@ -289,7 +336,9 @@ void source_and_settings_contract() {
                 "New resolutions must retain fixed preview size and orientation");
     }
     for (const char* invalid : {"640 240 99 8 2", "640 480 5 0 0 2", "640 480 5 0 0 junk",
-                                "640 480 5 0 0 1 extra"}) {
+                                "640 480 5 0 0 1 extra", "640 480 5 0 0 1\nbase_address=relative",
+                                "640 480 5 0 0 1\nunknown=x",
+                                "640 480 5 0 0 1\nbase_address=/a\nbase_address=/b"}) {
         { std::ofstream file(path); file << invalid; }
         bool rejected = false;
         try { load_settings(path); } catch (const std::runtime_error&) { rejected = true; }

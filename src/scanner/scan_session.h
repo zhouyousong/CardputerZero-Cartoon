@@ -16,7 +16,7 @@ class ScanSession {
 public:
     ScanAction press(ScanKey key);
     void frame_received();
-    ScanAction decoded(const DecodeResult& result);
+    ScanAction decoded(const DecodeResult& result, const std::string& base = {});
     void failed(std::string error, bool camera_error);
     void playback(const PlaybackUpdate& update);
     ScanAction suspend();

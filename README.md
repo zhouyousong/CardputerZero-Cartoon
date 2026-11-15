@@ -49,10 +49,49 @@ Warm standby still occupies the camera and consumes power and memory.
 
 Audio sources must be an absolute Linux file path (for example
 `/home/pi/audio/story.mp3`) or an HTTP/HTTPS direct audio URL. Unicode file names
-and URL query strings are preserved. Relative paths, other schemes, multiline
+and URL query strings are preserved. Relative paths use the configured audio
+base directory (see below); other schemes, multiline
 QR text and URLs containing embedded credentials are rejected explicitly.
 Ordinary HTML pages are not resolved to audio; there is no browser or shell
 execution of QR content. mpv handles supported audio formats with video disabled.
+
+### Relative audio addresses
+
+The settings page displays the audio base and scrolls the actual Linux config
+filename. Edit its `base_address=` line on Linux, then reopen settings (or restart
+the app) to reload it. There is no on-device free-text editor for this field;
+Left/Right on the base row leaves it unchanged. Pressing OK saves other settings
+without losing the base. If the file does not exist yet, save settings once.
+
+For the normal `pi` user the default file is
+`/home/pi/.config/cardputerzero-cartoon/scanner.conf`; `$XDG_CONFIG_HOME` overrides
+that location, and the UI always displays the effective filename.
+For example:
+
+```text
+320 240 5 0 0 0
+base_address=https://example.com/audio/
+```
+
+Keep the first line (scanner parameters) and edit the second line only.
+Alternatively use `base_address=/home/pi/audio/`. Leave it empty to require
+absolute QR addresses. A base must be an absolute Linux directory or an HTTP(S)
+directory URL without credentials, query or fragment; it is always treated as
+a directory, even without a trailing slash. Invalid settings are reported explicitly.
+
+Address classification:
+
+- `http://...` / `https://...`: direct absolute URL, independent of the base.
+- Any leading `/`: local absolute path, never a website-root-relative URL.
+- `a.mp3`, `stories/a.mp3`, `./a.mp3`, `../a.mp3`: resolve against the base;
+  literal `.` / `..` path segments are normalized. The base is not a sandbox:
+  `..` can access its parent directory. Network query/fragment suffixes and
+  percent escapes are preserved, not filesystem-normalized.
+- Other protocol prefixes (including `file:` and Windows drive paths) are rejected.
+- A relative QR with no base gives an actionable settings error.
+
+History stores resolved absolute addresses: changing the base only affects new
+scans and never changes the playback targets of the existing three tracks.
 
 The three-item history lives only in memory. Duplicate scans move the existing
 source to the top; playback alone never reorders it. A syntactically valid but
@@ -84,7 +123,8 @@ Settings persist atomically in `$XDG_CONFIG_HOME/cardputerzero-cartoon/scanner.c
 or `$HOME/.config/cardputerzero-cartoon/scanner.conf`. Missing settings use defaults;
 unreadable or corrupt settings report an error and can be replaced through **4**.
 Existing five-field settings load with ZBar; new saves append the decoder choice
-as a sixth field (0 = ZBar, 1 = ZXing-C++).
+as a sixth field (0 = ZBar, 1 = ZXing-C++), followed by an optional
+`base_address=` line. Older five/six-field files retain an empty base.
 No autofocus control is exposed because this IMX219 has no usable focus actuator.
 
 ## Privacy

@@ -10,6 +10,8 @@ struct AudioSource {
     bool network{false};
 };
 
-bool parse_audio_source(const std::string& text, AudioSource& source, std::string& error);
+bool valid_audio_base(const std::string& base);
+bool parse_audio_source(const std::string& text, AudioSource& source, std::string& error,
+                        const std::string& base = {});
 
 } // namespace cartoon

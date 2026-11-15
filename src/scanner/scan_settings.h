@@ -16,6 +16,7 @@ struct ScanSettings {
     int exposure{0};
     bool center_only{false};
     QrAlgorithm algorithm{QrAlgorithm::ZBar};
+    std::string base_address;
 };
 
 bool valid_settings(const ScanSettings& settings);

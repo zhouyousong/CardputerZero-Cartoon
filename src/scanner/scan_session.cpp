@@ -95,13 +95,13 @@ void ScanSession::frame_received() {
     }
 }
 
-ScanAction ScanSession::decoded(const DecodeResult& result) {
+ScanAction ScanSession::decoded(const DecodeResult& result, const std::string& base) {
     if (!result.found || (state_ != ScanState::Scanning && state_ != ScanState::Starting)) {
         return ScanAction::None;
     }
     AudioSource source;
     std::string error;
-    if (!result.supported || !parse_audio_source(result.text, source, error)) {
+    if (!result.supported || !parse_audio_source(result.text, source, error, base)) {
         failed(error.empty() ? u8"二维码不是有效的音频路径" : std::move(error), true);
         return ScanAction::PauseScan;
     }
