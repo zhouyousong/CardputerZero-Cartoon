@@ -67,7 +67,7 @@ public:
         label(root_, 166, 22, 150, u8"最近音频");
         for (size_t i = 0; i < tracks_.size(); ++i) {
             tracks_[i] = label(root_, 166, 41 + static_cast<int>(i) * 20, 150, "");
-            lv_label_set_long_mode(tracks_[i], LV_LABEL_LONG_DOTS);
+            lv_label_set_long_mode(tracks_[i], LV_LABEL_LONG_DOT);
             lv_obj_set_height(tracks_[i], 18);
         }
         status_ = label(root_, 166, 102, 150, u8"等待扫码");
@@ -226,7 +226,7 @@ private:
         for (size_t i = 0; i < tracks_.size(); ++i) {
             const bool selected = i < session_.history().size() && i == session_.selected();
             lv_obj_set_style_text_color(tracks_[i], lv_color_hex(selected ? 0x45d6b3 : 0xf0f4f8), 0);
-            lv_label_set_long_mode(tracks_[i], selected ? LV_LABEL_LONG_SCROLL_CIRCULAR : LV_LABEL_LONG_DOTS);
+            lv_label_set_long_mode(tracks_[i], selected ? LV_LABEL_LONG_SCROLL_CIRCULAR : LV_LABEL_LONG_DOT);
             const auto text = i < session_.history().size() ?
                 std::string(selected ? "> " : "  ") + session_.history()[i].title : "";
             if (text != track_text_[i]) {
