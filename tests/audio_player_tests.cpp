@@ -1,8 +1,10 @@
 #include "audio_player.h"
+#include "system_volume.h"
 
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -79,12 +81,78 @@ void playback(const std::string& source) {
     std::printf("PASS: actual audio load, duration %.2f, pause/resume, replay, EOF and cleanup.\n", playing.duration);
 }
 
+cartoon::VolumeUpdate volume_update(cartoon::SystemVolume& volume) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (auto update = volume.take_update()) return *update;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    throw std::runtime_error("System volume result timed out");
+}
+
+void mixer_command(const char* command) {
+    require(std::system(command) == 0, "Independent pactl mixer check failed");
+}
+
+void mixer() {
+    using namespace cartoon;
+    require(std::getenv("PULSE_SERVER"), "Mixer tests require an isolated PULSE_SERVER");
+    mixer_command("pactl set-sink-volume @DEFAULT_SINK@ 50%; pactl set-sink-mute @DEFAULT_SINK@ 0");
+    SystemVolume volume;
+    auto apply = [&](VolumeAction action, int percent, bool muted) {
+        volume.request(action);
+        const auto update = volume_update(volume);
+        require(update.error.empty() && update.percent == percent && update.muted == muted,
+                "System volume/mute result is incorrect");
+    };
+    apply(VolumeAction::Up, 55, false);
+    mixer_command("pactl get-sink-volume @DEFAULT_SINK@ | grep -q '55%'");
+    apply(VolumeAction::Down, 50, false);
+    apply(VolumeAction::ToggleMute, 50, true);
+    mixer_command("pactl get-sink-mute @DEFAULT_SINK@ | grep -q yes");
+    apply(VolumeAction::Down, 45, false);
+    mixer_command("pactl get-sink-mute @DEFAULT_SINK@ | grep -q no");
+    apply(VolumeAction::ToggleMute, 45, true);
+    apply(VolumeAction::ToggleMute, 45, false);
+    mixer_command("pactl set-sink-volume @DEFAULT_SINK@ 98%");
+    apply(VolumeAction::Up, 100, false);
+    apply(VolumeAction::Up, 100, false);
+    mixer_command("pactl get-sink-volume @DEFAULT_SINK@ | grep -q '100%'");
+    mixer_command("pactl set-sink-volume @DEFAULT_SINK@ 2%");
+    apply(VolumeAction::Down, 0, false);
+    apply(VolumeAction::Down, 0, false);
+    mixer_command("pactl get-sink-volume @DEFAULT_SINK@ | grep -q '0%'");
+    mixer_command("pactl set-sink-volume @DEFAULT_SINK@ 50%");
+    for (int i = 0; i < 3; ++i) volume.request(VolumeAction::Up);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+    bool queued = false;
+    while (std::chrono::steady_clock::now() < deadline) {
+        const auto update = volume_update(volume);
+        require(update.error.empty(), "Queued system volume failed");
+        if (update.percent == 65) { queued = true; break; }
+    }
+    require(queued, "Queued volume actions must not lose steps");
+    mixer_command("pactl get-sink-volume @DEFAULT_SINK@ | grep -q '65%'");
+    const std::string server = std::getenv("PULSE_SERVER");
+    require(setenv("PULSE_SERVER", "unix:/tmp/cartoon-missing-pulse", 1) == 0, "Cannot set test server");
+    volume.request(VolumeAction::Up);
+    const auto failed = volume_update(volume);
+    require(setenv("PULSE_SERVER", server.c_str(), 1) == 0, "Cannot restore test server");
+    require(!failed.error.empty(), "Unavailable mixer must report an explicit bounded error");
+    mixer_command("pactl set-sink-volume @DEFAULT_SINK@ 50%");
+    std::puts("PASS: real system mixer steps, mute/unmute, 0-100% limits, queued actions and connection errors.");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     const auto path = argc > 1 && std::string(argv[1]).front() == '/' ? std::string(argv[1]) :
         (std::filesystem::temp_directory_path() / ("cartoon-audio-test-" + std::to_string(getpid()) + ".wav")).string();
     try {
+        if (argc > 1 && std::string(argv[1]) == "--mixer-only") {
+            mixer();
+            return 0;
+        }
         fixture(path);
         if (argc > 2 && std::string(argv[2]) == "--fixture-only") {
             std::puts("Fixture generated.");

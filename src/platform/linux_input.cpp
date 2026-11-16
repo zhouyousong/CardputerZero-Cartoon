@@ -46,6 +46,9 @@ struct EvdevKeypad {
     bool router_event_pending{false};
     uint32_t router_key{0};
     bool router_pressed{false};
+    uint16_t volume_code{0};
+    uint32_t volume_changed_at{0};
+    uint32_t volume_repeat_delay{400};
 };
 #endif
 
@@ -256,7 +259,25 @@ void evdev_read_cb(lv_indev_t* indev, lv_indev_data_t* data) {
 
     input_event input{};
     while (read(keypad->fd, &input, sizeof(input)) == sizeof(input)) {
+        if (input.type == EV_SYN && input.code == SYN_DROPPED) {
+            keypad->volume_code = 0;
+        }
         if (input.type != EV_KEY) {
+            continue;
+        }
+
+        if (input.code == KEY_VOLUMEDOWN || input.code == KEY_VOLUMEUP || input.code == KEY_MUTE) {
+            if (input.value == 1 || (input.value == 2 && input.code != KEY_MUTE)) {
+                emit_global_key(input.code == KEY_MUTE ? kKeyMute :
+                    input.code == KEY_VOLUMEUP ? kKeyVolumeUp : kKeyVolumeDown, false);
+                if (input.code != KEY_MUTE) {
+                    keypad->volume_code = input.code;
+                    keypad->volume_changed_at = lv_tick_get();
+                    keypad->volume_repeat_delay = input.value == 1 ? 400 : 100;
+                }
+            } else if (input.value == 0 && keypad->volume_code == input.code) {
+                keypad->volume_code = 0;
+            }
             continue;
         }
 
@@ -274,6 +295,11 @@ void evdev_read_cb(lv_indev_t* indev, lv_indev_data_t* data) {
         break;
     }
 
+    if (keypad->volume_code && lv_tick_elaps(keypad->volume_changed_at) >= keypad->volume_repeat_delay) {
+        emit_global_key(keypad->volume_code == KEY_VOLUMEUP ? kKeyVolumeUp : kKeyVolumeDown, false);
+        keypad->volume_changed_at = lv_tick_get();
+        keypad->volume_repeat_delay = 100;
+    }
     data->key = keypad->key;
     data->state = keypad->state;
 }

@@ -21,7 +21,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             ca-certificates git build-essential cmake ninja-build pkg-config dpkg-dev \
             libfmt-dev libpng-dev libjpeg-dev libfreetype-dev zlib1g-dev \
-            libzbar-dev libzxing-dev libqrencode-dev libcjson-dev mpv pulseaudio python3
+            libzbar-dev libzxing-dev libqrencode-dev libcjson-dev libpulse-dev mpv pulseaudio python3
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -58,6 +58,7 @@ jobs:
             sleep 0.2
           done
           if ! pactl info; then cat /tmp/cartoon-pulse.log; exit 1; fi
+          build/cp0-native/Release/audio_player_tests --mixer-only
           build/cp0-native/Release/audio_player_tests
           mkdir -p /tmp/cartoon-http
           build/cp0-native/Release/audio_player_tests /tmp/cartoon-http/tone.wav --fixture-only

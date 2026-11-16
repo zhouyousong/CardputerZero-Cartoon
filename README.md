@@ -26,8 +26,15 @@ A camera QR audio player for the 320x170 CardputerZero, based on the
   stopping the current operation and playing the chosen track from the start.
   History does not wrap at the ends.
 - **R**: replay the selected track from the start.
-- **System volume keys**: use the launcher's existing volume/mute controls.
-  The app does not change the system mixer or bind Up/Down to volume. Playback
+- **Fn+S / Fn+D**: lower/raise the system output volume in 5% steps, including
+  key repeats, clamped to 0-100%. **Fn+A** toggles system mute (once per press).
+  The keyboard driver emits standard volume/mute keys for these combinations.
+  The app handles them directly because Launcher suspends its normal shortcut
+  dispatch while an external app runs. It adjusts the same default PulseAudio
+  output as Launcher, reads its current value on every action, and briefly shows
+  system-volume feedback (also in settings). Volume adjustment unmutes output.
+  Mixer operations run off the UI thread, time out explicitly, and do not bind
+  Up/Down or ordinary S/D/A to volume. Playback
   uses 100% player gain rather than a second app-level volume multiplier, so
   perceived loudness may be higher than the previous 60% app default.
 - **4** (also **S**): scanner settings (see below).
@@ -171,7 +178,7 @@ On Debian 13 ARM64:
 ```sh
 sudo apt-get install build-essential cmake ninja-build pkg-config git \
     libfmt-dev libpng-dev libjpeg-dev libfreetype-dev zlib1g-dev \
-    libzbar-dev libzxing-dev libqrencode-dev libcjson-dev dpkg-dev
+    libzbar-dev libzxing-dev libqrencode-dev libcjson-dev libpulse-dev dpkg-dev
 cmake --preset cp0-native -DCM0_SDK_ROOT=/ -DCM0_ALLOW_FETCH_DEPS=OFF
 cmake --build --preset cp0-native-rel --parallel 1
 ctest --test-dir build/cp0-native -C Release --output-on-failure
@@ -198,6 +205,9 @@ center-only cropping and fixed preview scaling for the capture resolutions. An a
 frame checks the 180-degree preview rotation.
 `audio_player_tests` verifies real mpv playback through the current PulseAudio
 server using a generated four-second tone (5% volume); it needs mpv installed.
+Its `--mixer-only` mode tests real system volume, limits, mute, queued changes,
+and connection errors. Run that mode only against an isolated test audio server,
+not the user's real output; CI provides a private null sink.
 Hardware camera/display tests remain separate from cloud tests.
 The scanner test executable redirects camera process launches to its own YUV/QR
 fixture, exercising real pipes and child cleanup without requiring cloud hardware.

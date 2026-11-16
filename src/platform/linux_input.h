@@ -11,6 +11,9 @@ constexpr size_t kNavKeyCount = 5;
 constexpr uint32_t kSpecialKeyBase = 0x200000U;
 constexpr uint32_t kKeyPrintScreen = kSpecialKeyBase | 18U;
 constexpr uint32_t kKeyHelp = kSpecialKeyBase | 19U;
+constexpr uint32_t kKeyVolumeDown = kSpecialKeyBase | 20U;
+constexpr uint32_t kKeyVolumeUp = kSpecialKeyBase | 21U;
+constexpr uint32_t kKeyMute = kSpecialKeyBase | 22U;
 
 using KeyReleaseListener = void (*)(uint32_t key, const char* key_name, void* user_data);
 using GlobalKeyListener = bool (*)(uint32_t key,

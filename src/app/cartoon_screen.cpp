@@ -7,6 +7,7 @@
 #include "logger.h"
 #include "scan_session.h"
 #include "scan_settings.h"
+#include "system_volume.h"
 #include "src/drivers/display/fb/lv_linux_fbdev.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
 
@@ -46,8 +47,9 @@ public:
         lv_obj_set_style_text_font(root_, font ? font : &lv_font_montserrat_12, 0);
         lv_obj_set_style_text_color(root_, lv_color_hex(0xf0f4f8), 0);
         title_ = label(root_, 4, 1, 70, "Cartoon");
-        auto* shortcuts = label(root_, 75, 2, 241, u8"R 重播  系统音量键  ESC 退出");
-        lv_obj_set_style_text_font(shortcuts, small ? small : &lv_font_montserrat_12, 0);
+        shortcuts_ = label(root_, 75, 2, 241, u8"R 重播  Fn+S/D 音量  ESC 退出");
+        lv_obj_set_style_text_font(shortcuts_, small ? small : &lv_font_montserrat_12, 0);
+        lv_label_set_long_mode(shortcuts_, LV_LABEL_LONG_SCROLL_CIRCULAR);
 
         camera_box_ = lv_obj_create(root_);
         lv_obj_remove_style_all(camera_box_);
@@ -111,6 +113,12 @@ public:
             u8"↑↓ 选择  ←→ 调值  OK 保存  ESC 取消");
         lv_obj_set_style_text_font(settings_footer, small ? small : &lv_font_montserrat_12, 0);
         lv_obj_add_flag(settings_screen_, LV_OBJ_FLAG_HIDDEN);
+        volume_hint_ = label(root_, 75, 2, 241, "");
+        lv_obj_set_style_bg_color(volume_hint_, lv_color_hex(0x101820), 0);
+        lv_obj_set_style_bg_opa(volume_hint_, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_font(volume_hint_, small ? small : &lv_font_montserrat_12, 0);
+        lv_label_set_long_mode(volume_hint_, LV_LABEL_LONG_SCROLL_CIRCULAR);
+        lv_obj_add_flag(volume_hint_, LV_OBJ_FLAG_HIDDEN);
 
         image_.header.magic = LV_IMAGE_HEADER_MAGIC;
         image_.header.cf = LV_COLOR_FORMAT_RGB565;
@@ -141,6 +149,22 @@ public:
     bool running() const { return running_; }
 
     void update() {
+        if (auto volume = volume_.take_update()) {
+            const auto text = volume->error.empty() ?
+                std::string(u8"系统音量 ") + std::to_string(volume->percent) + "%" +
+                    (volume->muted ? u8"（静音）" : "") : volume->error;
+            if (!volume->error.empty()) {
+                std::fprintf(stderr, "Cartoon volume: %s\n", volume->error.c_str());
+            }
+            lv_label_set_text(volume_hint_, text.c_str());
+            lv_obj_remove_flag(volume_hint_, LV_OBJ_FLAG_HIDDEN);
+            volume_hint_until_ = lv_tick_get();
+            volume_hint_visible_ = true;
+        }
+        if (volume_hint_visible_ && lv_tick_elaps(volume_hint_until_) >= 2500) {
+            lv_obj_add_flag(volume_hint_, LV_OBJ_FLAG_HIDDEN);
+            volume_hint_visible_ = false;
+        }
         auto next = camera_.take_update();
         const auto state = session_.state();
         const bool scanning = state == ScanState::Starting || state == ScanState::Scanning;
@@ -360,6 +384,19 @@ private:
 
     bool key(uint32_t key, bool held) {
         if (held) return true;
+        if (key == platform::kKeyVolumeDown || key == platform::kKeyVolumeUp || key == platform::kKeyMute) {
+            try {
+                volume_.request(key == platform::kKeyMute ? VolumeAction::ToggleMute :
+                    key == platform::kKeyVolumeUp ? VolumeAction::Up : VolumeAction::Down);
+            } catch (const std::exception& error) {
+                std::fprintf(stderr, "Cartoon volume: %s\n", error.what());
+                lv_label_set_text(volume_hint_, u8"无法启动系统音量控制");
+                lv_obj_remove_flag(volume_hint_, LV_OBJ_FLAG_HIDDEN);
+                volume_hint_until_ = lv_tick_get();
+                volume_hint_visible_ = true;
+            }
+            return true;
+        }
         if (in_settings_) return settings_key(key);
         if (key == '4' || key == 's' || key == 'S') {
             execute(session_.suspend());
@@ -404,6 +441,7 @@ private:
 
     CameraCapture camera_;
     AudioPlayer player_;
+    SystemVolume volume_;
     ScanSession session_;
     ScanSettings settings_;
     ScanSettings draft_;
@@ -413,9 +451,13 @@ private:
     std::string status_text_;
     bool running_{true};
     bool in_settings_{false};
+    bool volume_hint_visible_{false};
+    uint32_t volume_hint_until_{0};
     size_t setting_index_{0};
     lv_obj_t* root_{nullptr};
     lv_obj_t* title_{nullptr};
+    lv_obj_t* shortcuts_{nullptr};
+    lv_obj_t* volume_hint_{nullptr};
     lv_obj_t* camera_box_{nullptr};
     lv_obj_t* preview_{nullptr};
     lv_obj_t* guide_{nullptr};

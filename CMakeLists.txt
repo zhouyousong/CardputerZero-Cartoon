@@ -6,7 +6,7 @@
 
 cmake_minimum_required(VERSION 3.31)
 
-project(cardputerzero_cartoon VERSION 0.3.1 LANGUAGES C CXX)
+project(cardputerzero_cartoon VERSION 0.3.2 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -623,17 +623,19 @@ find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 pkg_check_modules(ZBAR REQUIRED IMPORTED_TARGET zbar)
 pkg_check_modules(CJSON REQUIRED IMPORTED_TARGET libcjson)
+pkg_check_modules(PULSE REQUIRED IMPORTED_TARGET libpulse)
 add_library(cartoon_scanner STATIC
     src/scanner/qr_decoder.cpp
     src/scanner/scan_session.cpp
     src/scanner/camera_capture.cpp
     src/scanner/audio_source.cpp
     src/scanner/audio_player.cpp
+    src/scanner/system_volume.cpp
     src/scanner/scan_settings.cpp
 )
 target_include_directories(cartoon_scanner PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src/scanner")
 find_package(ZXing 2.3 REQUIRED)
-target_link_libraries(cartoon_scanner PUBLIC PkgConfig::ZBAR ZXing::ZXing PkgConfig::CJSON Threads::Threads)
+target_link_libraries(cartoon_scanner PUBLIC PkgConfig::ZBAR ZXing::ZXing PkgConfig::CJSON PkgConfig::PULSE Threads::Threads)
 target_link_libraries(${PROJECT_NAME}_core PUBLIC cartoon_scanner)
 
 include(CTest)
